@@ -1,0 +1,11 @@
+[run]
+branch = True
+
+# Include is relative to the repository root in this case
+include =
+    core/*
+
+omit =
+    **/tests/*
+    conftest.py
+    **/__init__.py
