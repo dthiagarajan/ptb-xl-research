@@ -18,9 +18,9 @@ class Simple1DCNN(nn.Module):
     )
 
     """
-    def __init__(self):
+    def __init__(self, num_input_channels=12, num_classes=5):
         super(Simple1DCNN, self).__init__()
-        self.layer1 = nn.Conv1d(12, 32, kernel_size=3)
+        self.layer1 = nn.Conv1d(num_input_channels, 32, kernel_size=3)
         self.pool1 = nn.AvgPool1d(3)
         self.bn1 = nn.BatchNorm1d(32)
         self.layer2 = nn.Conv1d(32, 64, kernel_size=3)
@@ -31,6 +31,7 @@ class Simple1DCNN(nn.Module):
         self.bn3 = nn.BatchNorm1d(128)
 
         self.final_pool = nn.AdaptiveAvgPool1d(1)
+        self.final_layer = nn.Conv1d(128, num_classes, kernel_size=1)
 
     def forward(self, x):
         out = self.layer1(x)
@@ -49,5 +50,5 @@ class Simple1DCNN(nn.Module):
         out = self.bn3(out)
 
         out = self.final_pool(out)
-
+        out = self.final_layer(out)
         return out.view(x.size(0), -1)

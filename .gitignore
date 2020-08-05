@@ -4,3 +4,4 @@ __pycache__/
 *.npy
 *.json
 *.ipynb
+lightning_logs/*

@@ -1,4 +1,5 @@
 pytorch-lightning
+torch
 torchvision
 tqdm
 wfdb
