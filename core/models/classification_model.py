@@ -58,6 +58,7 @@ class PTBXLClassificationModel(LightningModule):
     def update_hyperparams_and_metrics(self, metrics):
         if self.best_metrics is None:
             self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
+            self.best_metrics['best_epoch'] = 0
         else:
             flag = True
             for k in metrics:
@@ -71,6 +72,7 @@ class PTBXLClassificationModel(LightningModule):
                         break
             if flag is True:
                 self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
+                self.best_metrics['best_epoch'] = self.current_epoch
         self.logger.log_hyperparams(self.hparams, self.best_metrics)
 
     def on_fit_start(self):
