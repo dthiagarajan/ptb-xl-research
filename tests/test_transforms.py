@@ -35,7 +35,7 @@ class TestBinarizeLabel:
             [0, 1, 0],
             [0, 0, 1]
         ])
-        assert len(valid_data) == len(valid_labels)
+        assert len(valid_data) == len(valid_labels) + 1
         assert (valid_labels == expected_result).all()
         assert (mlb.classes_ == np.array([1, 2, 3])).all()
 
