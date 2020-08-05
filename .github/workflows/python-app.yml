@@ -34,3 +34,6 @@ jobs:
     - name: Test with pytest
       run: |
         make test
+    - name: Upload coverage
+      shell: pwsh
+      run: coverage report -m
