@@ -1,3 +1,4 @@
+"""Simple 1D CNN for training on PTB-XL. Note that it's hard coded."""
 import torch.nn as nn
 
 
