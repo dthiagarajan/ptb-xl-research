@@ -17,11 +17,11 @@ def window_sampling_transform(signal_length: int, window_size: int):
             of length `signal_length`
     """
     assert window_size <= signal_length
-    # Sample an index where window starting at that number can fit
-    index = np.random.randint(0, signal_length - window_size + 1)
 
     def sampling_operation(signal: np.ndarray) -> np.ndarray:
         assert len(signal) == signal_length
+        # Sample an index where window starting at that number can fit
+        index = np.random.randint(0, signal_length - window_size + 1)
         return signal[index:index + window_size]
 
     return sampling_operation
