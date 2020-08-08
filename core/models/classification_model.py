@@ -15,6 +15,7 @@ from core.data.transforms import (
     window_segmenting_test_transform
 )
 from core.data.utils import load_all_data, split_all_data
+from core.metrics import AUC, metric_summary
 import core.models as ptbxl_models
 from core.models.wrappers import TTAWrapper
 
@@ -40,6 +41,7 @@ class PTBXLClassificationModel(LightningModule):
         self.num_input_channels = kwargs['num_input_channels']
         self.num_classes = kwargs['num_classes']
         self.num_workers = kwargs['num_workers']
+        self.lr = kwargs['lr']
         self.model = self.initialize_model(
             self.model_name, self.num_input_channels, self.num_classes
         )
@@ -66,19 +68,27 @@ class PTBXLClassificationModel(LightningModule):
                     if metrics[k] >= self.best_metrics[f'best_{k}']:
                         flag = False
                         break
-                elif 'acc' in k:
+                elif 'acc' in k or 'auc' in k:
                     if metrics[k] <= self.best_metrics[f'best_{k}']:
                         flag = False
                         break
             if flag is True:
                 self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
                 self.best_metrics['best_epoch'] = self.current_epoch
-        self.logger.log_hyperparams(self.hparams, self.best_metrics)
+        try:
+            self.logger.log_hyperparams(self.hparams, self.best_metrics)
+        except TypeError:
+            print(f'Using a logger that does not log metrics with hyperparams.')
 
     def on_fit_start(self):
         # Need this function to have best metrics being logged in hyperparameters tab of TB
         self.update_hyperparams_and_metrics(
-            {'val_epoch_loss': float('inf'), 'val_epoch_acc': 0}
+            {
+                'val_epoch_loss': float('inf'),
+                'val_epoch_acc': 0,
+                'val_epoch_auc': 0,
+                'val_epoch_f_max': 0
+            }
         )
 
     def forward(self, x):
@@ -89,18 +99,44 @@ class PTBXLClassificationModel(LightningModule):
         probabilities = self(x)
         loss = self.loss(probabilities, y.float())
         acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
-
-        tensorboard_logs = {'Train/train_step_loss': loss, 'Train/train_step_acc': acc}
+        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        tensorboard_logs = {
+            'Train/train_step_loss': loss, 'Train/train_step_acc': acc, 'Train/train_step_auc': auc
+        }
         self.logger.log_metrics(tensorboard_logs, self.train_step)
         self.train_step += 1
 
-        return {'loss': loss, 'acc': acc, 'progress_bar': tensorboard_logs}
+        return {
+            'loss': loss,
+            'acc': acc,
+            'auc': auc,
+            'probs': probabilities,
+            'targets': y,
+            'progress_bar': tensorboard_logs
+        }
 
     def training_epoch_end(self, outputs):
         loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
+        auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
+        probs = torch.cat([x['probs'] for x in outputs])
+        targets = torch.cat([x['targets'] for x in outputs])
+        (
+            f_max,
+            _,
+            f_scores,
+            average_precisions,
+            average_recalls,
+            thresholds
+        ) = metric_summary(targets.numpy(), probs.numpy())
+
         self.logger.log_metrics(
-            {"Train/train_loss": loss_mean, "Train/train_acc": acc_mean}, self.current_epoch + 1
+            {
+                "Train/train_loss": loss_mean,
+                "Train/train_acc": acc_mean,
+                "Train/train_auc": auc_mean
+            },
+            self.current_epoch + 1
         )
         self.logger.experiment.add_scalars(
             "Losses", {"train_loss": loss_mean}, self.current_epoch + 1
@@ -108,24 +144,73 @@ class PTBXLClassificationModel(LightningModule):
         self.logger.experiment.add_scalars(
             "Accuracies", {"train_acc": acc_mean}, self.current_epoch + 1
         )
-        return {'train_epoch_loss': loss_mean, 'train_epoch_acc': acc_mean}
+        self.logger.experiment.add_scalars(
+            "AUCs", {"train_auc": auc_mean}, self.current_epoch + 1
+        )
+        self.logger.experiment.add_scalars(
+            "F1 Max Scores", {"train_f1-max": f_max}, self.current_epoch + 1
+        )
+        metric_appendix = {}
+        for f1_score, average_precision, average_recall, threshold in zip(
+            f_scores, average_precisions, average_recalls, thresholds
+        ):
+            metric_appendix.update({
+                f'Train Metric Appendix/F1-Score ({threshold:0.1f})': f1_score,
+                f'Train Metric Appendix/Average Precision ({threshold:0.1f})': average_precision,
+                f'Train Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
+            })
+        self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
+        return {
+            'train_epoch_loss': loss_mean,
+            'train_epoch_acc': acc_mean,
+            'train_epoch_auc': auc_mean,
+            'train_f_max': f_max,
+        }
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
         probabilities = self(x)
         loss = self.loss(probabilities, y.float())
         acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
-        tensorboard_logs = {'Validation/val_step_loss': loss, 'Validation/val_step_acc': acc}
+        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        tensorboard_logs = {
+            'Validation/val_step_loss': loss,
+            'Validation/val_step_acc': acc,
+            'Validation/val_step_auc': auc,
+        }
         self.logger.log_metrics(tensorboard_logs, self.val_step)
         self.val_step += 1
 
-        return {'loss': loss, 'acc': acc, 'progress_bar': tensorboard_logs}
+        return {
+            'loss': loss,
+            'acc': acc,
+            'auc': auc,
+            'probs': probabilities,
+            'targets': y,
+            'progress_bar': tensorboard_logs
+        }
 
     def validation_epoch_end(self, outputs):
         val_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         val_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
+        val_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
+        probs = torch.cat([x['probs'] for x in outputs])
+        targets = torch.cat([x['targets'] for x in outputs])
+        (
+            f_max,
+            _,
+            f_scores,
+            average_precisions,
+            average_recalls,
+            thresholds
+        ) = metric_summary(targets.numpy(), probs.numpy())
+
         self.logger.log_metrics(
-            {"Validation/val_loss": val_loss_mean, "Validation/val_acc": val_acc_mean},
+            {
+                "Validation/val_loss": val_loss_mean,
+                "Validation/val_acc": val_acc_mean,
+                "Validation/val_auc": val_auc_mean,
+            },
             self.current_epoch + 1
         )
         self.logger.experiment.add_scalars(
@@ -134,14 +219,40 @@ class PTBXLClassificationModel(LightningModule):
         self.logger.experiment.add_scalars(
             "Accuracies", {"val_acc": val_acc_mean}, self.current_epoch + 1
         )
-        self.update_hyperparams_and_metrics(
-            {'val_epoch_loss': val_loss_mean, 'val_epoch_acc': val_acc_mean}
+        self.logger.experiment.add_scalars(
+            "AUCs", {"val_auc": val_auc_mean}, self.current_epoch + 1
         )
-        return {'val_epoch_loss': val_loss_mean, 'val_epoch_acc': val_acc_mean}
+        self.logger.experiment.add_scalars(
+            "F1 Max Scores", {"val_f1-max": f_max}, self.current_epoch + 1
+        )
+        metric_appendix = {}
+        for f1_score, average_precision, average_recall, threshold in zip(
+            f_scores, average_precisions, average_recalls, thresholds
+        ):
+            metric_appendix.update({
+                f'Validation Metric Appendix/F1-Score ({threshold:0.1f})': f1_score,
+                f'Validation Metric Appendix/Average Precision ({threshold:0.1f})': average_precision,
+                f'Validation Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
+            })
+        self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
+        self.update_hyperparams_and_metrics(
+            {
+                'val_epoch_loss': val_loss_mean,
+                'val_epoch_acc': val_acc_mean,
+                'val_epoch_auc': val_auc_mean,
+                'val_epoch_f_max': f_max
+            }
+        )
+        return {
+            'val_epoch_loss': val_loss_mean,
+            'val_epoch_acc': val_acc_mean,
+            'val_epoch_auc': val_auc_mean,
+            'val_epoch_f_max': f_max
+        }
 
     def configure_optimizers(self):
         return torch.optim.Adam([
-            {'params': self.model.parameters(), 'lr': 1e-3},
+            {'params': self.model.parameters(), 'lr': self.lr},
         ])
 
     def prepare_data(self):
@@ -216,5 +327,6 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--num_input_channels', type=int, default=12)
         parser.add_argument('--num_classes', type=int, default=5)
         parser.add_argument('--num_workers', type=int, default=0)
+        parser.add_argument('--lr', type=float, default=1e-3)
         parser.add_argument('--sampling_rate', type=int, default=500)
         return parser
