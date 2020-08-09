@@ -401,5 +401,5 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--num_classes', type=int, default=5)
         parser.add_argument('--num_workers', type=int, default=0)
         parser.add_argument('--lr', type=float, default=1e-3)
-        parser.add_argument('--sampling_rate', type=int, default=500)
+        parser.add_argument('--sampling_rate', type=int, default=100)
         return parser
