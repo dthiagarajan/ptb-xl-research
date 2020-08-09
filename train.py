@@ -22,9 +22,9 @@ def get_args():
     parser = argparse.ArgumentParser(
         'Train a classification model on PTB-XL diagnostic superclass'
     )
-    parser.add_argument('--checkpoint_models', action='store_true')
-    parser.add_argument('--early_stopping', action='store_true')
-    parser.add_argument('--find_lr', action='store_true')
+    parser.add_argument('--checkpoint_models', type=bool, default=False)
+    parser.add_argument('--early_stopping', type=bool, default=False)
+    parser.add_argument('--find_lr', type=bool, default=False)
     parser = PTBXLClassificationModel.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
     return parser.parse_args()
