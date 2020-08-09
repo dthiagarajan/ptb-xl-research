@@ -65,8 +65,13 @@ class PTBXLClassificationModel(LightningModule):
             except TypeError:
                 print(f'Using a logger that does not log metrics with hyperparams.')
         elif self.logger_platform == 'wandb':
-            self.logger.log_hyperparams(self.hparams)
-            self.logger.experiment.summary.update(self.best_metrics)
+            try:
+                self.logger.log_hyperparams(self.hparams)
+                self.logger.experiment.summary.update(self.best_metrics)
+            except AttributeError:
+                print(
+                    f'Logger experiment is mocked for LR find - skipping hyperparameter logging.'
+                )
 
     def update_hyperparams_and_metrics(self, metrics):
         if self.best_metrics is None:
@@ -146,18 +151,21 @@ class PTBXLClassificationModel(LightningModule):
             },
             self.current_epoch + 1
         )
-        self.logger.add_scalars(
-            "Losses", {"train_loss": loss_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "Accuracies", {"train_acc": acc_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "AUCs", {"train_auc": auc_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "F1 Max Scores", {"train_f1-max": f_max}, self.current_epoch + 1
-        )
+        try:
+            self.logger.add_scalars(
+                "Losses", {"train_loss": loss_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "Accuracies", {"train_acc": acc_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "AUCs", {"train_auc": auc_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "F1 Max Scores", {"train_f1-max": f_max}, self.current_epoch + 1
+            )
+        except AttributeError as e:
+            print(f'In (train) LR find, error ignored: {str(e)}')
         metric_appendix = {}
         for f1_score, average_precision, average_recall, threshold in zip(
             f_scores, average_precisions, average_recalls, thresholds
@@ -221,18 +229,21 @@ class PTBXLClassificationModel(LightningModule):
             },
             self.current_epoch + 1
         )
-        self.logger.add_scalars(
-            "Losses", {"val_loss": val_loss_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "Accuracies", {"val_acc": val_acc_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "AUCs", {"val_auc": val_auc_mean}, self.current_epoch + 1
-        )
-        self.logger.add_scalars(
-            "F1 Max Scores", {"val_f1-max": f_max}, self.current_epoch + 1
-        )
+        try:
+            self.logger.add_scalars(
+                "Losses", {"val_loss": val_loss_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "Accuracies", {"val_acc": val_acc_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "AUCs", {"val_auc": val_auc_mean}, self.current_epoch + 1
+            )
+            self.logger.add_scalars(
+                "F1 Max Scores", {"val_f1-max": f_max}, self.current_epoch + 1
+            )
+        except AttributeError as e:
+            print(f'In (validation) LR find, error ignored: {str(e)}')
         metric_appendix = {}
         for f1_score, average_precision, average_recall, threshold in zip(
             f_scores, average_precisions, average_recalls, thresholds
