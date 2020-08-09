@@ -36,6 +36,7 @@ class PTBXLClassificationModel(LightningModule):
             f"Please pick one of: {self.allowed_models}"
         self.model_name = kwargs['model_name']
         self.task_name = kwargs['task_name']
+        self.logger_platform = kwargs['logger_platform']
         self.data_dir = kwargs['data_dir']
         self.batch_size = kwargs['batch_size']
         self.num_input_channels = kwargs['num_input_channels']
@@ -57,6 +58,16 @@ class PTBXLClassificationModel(LightningModule):
             num_input_channels=num_input_channels, num_classes=num_classes
         ))
 
+    def log_hyperparams(self):
+        if self.logger_platform == 'tensorboard':
+            try:
+                self.logger.log_hyperparams(self.hparams, self.best_metrics)
+            except TypeError:
+                print(f'Using a logger that does not log metrics with hyperparams.')
+        elif self.logger_platform == 'wandb':
+            self.logger.log_hyperparams(self.hparams)
+            self.logger.experiment.summary.update(self.best_metrics)
+
     def update_hyperparams_and_metrics(self, metrics):
         if self.best_metrics is None:
             self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
@@ -75,10 +86,7 @@ class PTBXLClassificationModel(LightningModule):
             if flag is True:
                 self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
                 self.best_metrics['best_epoch'] = self.current_epoch
-        try:
-            self.logger.log_hyperparams(self.hparams, self.best_metrics)
-        except TypeError:
-            print(f'Using a logger that does not log metrics with hyperparams.')
+        self.log_hyperparams()
 
     def on_fit_start(self):
         # Need this function to have best metrics being logged in hyperparameters tab of TB
@@ -138,16 +146,16 @@ class PTBXLClassificationModel(LightningModule):
             },
             self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "Losses", {"train_loss": loss_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "Accuracies", {"train_acc": acc_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "AUCs", {"train_auc": auc_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "F1 Max Scores", {"train_f1-max": f_max}, self.current_epoch + 1
         )
         metric_appendix = {}
@@ -213,16 +221,16 @@ class PTBXLClassificationModel(LightningModule):
             },
             self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "Losses", {"val_loss": val_loss_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "Accuracies", {"val_acc": val_acc_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "AUCs", {"val_auc": val_auc_mean}, self.current_epoch + 1
         )
-        self.logger.experiment.add_scalars(
+        self.logger.add_scalars(
             "F1 Max Scores", {"val_f1-max": f_max}, self.current_epoch + 1
         )
         metric_appendix = {}
@@ -250,6 +258,45 @@ class PTBXLClassificationModel(LightningModule):
             'val_epoch_f_max': f_max
         }
 
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        probabilities = self(x)
+        loss = self.loss(probabilities, y.float())
+        acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
+        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        tensorboard_logs = {
+            'Validation/val_step_loss': loss,
+            'Validation/val_step_acc': acc,
+            'Validation/val_step_auc': auc,
+        }
+
+        return {
+            'loss': loss,
+            'acc': acc,
+            'auc': auc,
+            'probs': probabilities,
+            'targets': y,
+            'progress_bar': tensorboard_logs
+        }
+
+    def test_epoch_end(self, outputs):
+        val_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
+        val_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
+        val_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
+        probs = torch.cat([x['probs'] for x in outputs])
+        targets = torch.cat([x['targets'] for x in outputs])
+        f_max = metric_summary(targets.numpy(), probs.numpy())[0]
+        self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
+        self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
+        return {
+            'log': {
+                'val_epoch_loss': val_loss_mean,
+                'val_epoch_acc': val_acc_mean,
+                'val_epoch_auc': val_auc_mean,
+                'val_epoch_f_max': f_max
+            }
+        }
+
     def configure_optimizers(self):
         return torch.optim.Adam([
             {'params': self.model.parameters(), 'lr': self.lr},
@@ -260,12 +307,14 @@ class PTBXLClassificationModel(LightningModule):
             Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy').exists() and
             Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_labels.npy').exists() and
             Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_data.npy').exists() and
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy').exists()
+            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy').exists() and
+            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy').exists()
         ):
             valid_x_train = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy'))
             valid_y_train = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_labels.npy'))
             valid_x_test = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_data.npy'))
             valid_y_test = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy'))
+            self.labels = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy'), allow_pickle=True)
 
         else:
             X, Y = load_all_data('', self.sampling_rate)
@@ -276,6 +325,7 @@ class PTBXLClassificationModel(LightningModule):
             valid_x_test, valid_y_test, _ = binarize_labels(
                 X_test, y_test, self.task_name, mlb
             )
+            self.labels = mlb.classes_
 
             Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name).mkdir(parents=True, exist_ok=True)
             np.save(
@@ -289,6 +339,9 @@ class PTBXLClassificationModel(LightningModule):
             )
             np.save(
                 Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy'), valid_y_test
+            )
+            np.save(
+                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy'), mlb.classes_
             )
 
         # Conv1d expects shape (N, C_in, L_in), so we set signal length as the last dimension
@@ -317,11 +370,20 @@ class PTBXLClassificationModel(LightningModule):
             shuffle=False,
         )
 
+    def test_dataloader(self):
+        return DataLoader(
+            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+            shuffle=False,
+        )
+
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument('--model_name', type=str, default='Simple1DCNN')
         parser.add_argument('--task_name', type=str, default='diagnostic_superclass')
+        parser.add_argument(
+            '--logger_platform', type=str, choices=['tensorboard', 'wandb'], default='tensorboard'
+        )
         parser.add_argument('--data_dir', type=str, default='./')
         parser.add_argument('--batch_size', type=int, default=128)
         parser.add_argument('--num_input_channels', type=int, default=12)

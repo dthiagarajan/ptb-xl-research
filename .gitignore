@@ -5,3 +5,4 @@ __pycache__/
 *.json
 *.ipynb
 lightning_logs/*
+wandb/*
