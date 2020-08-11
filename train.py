@@ -23,7 +23,7 @@ def get_args():
         'Train a classification model on PTB-XL diagnostic superclass'
     )
     parser.add_argument('--checkpoint_models', type=bool, default=False)
-    parser.add_argument('--early_stopping', type=bool, default=False)
+    parser.add_argument('--early_stopping', type=bool, default=True)
     parser.add_argument('--find_lr', type=bool, default=False)
     parser.add_argument('--show_heatmaps', type=bool, default=False)
     parser = PTBXLClassificationModel.add_model_specific_args(parser)
