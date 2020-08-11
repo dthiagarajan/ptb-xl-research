@@ -8,6 +8,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 
+from core.analysis.visualization import compute_and_show_heatmap
 from core.data.dataset import ECGDataset
 from core.data.transforms import (
     binarize_labels,
@@ -30,13 +31,13 @@ class PTBXLClassificationModel(LightningModule):
         'wide_resnet50_2', 'wide_resnet101_2'
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, model_name, *args, **kwargs):
         super(PTBXLClassificationModel, self).__init__()
-        assert kwargs['model_name'] in self.allowed_models, \
-            f"Please pick one of: {self.allowed_models}"
-        self.model_name = kwargs['model_name']
+        assert model_name in self.allowed_models, f"Please pick one of: {self.allowed_models}"
+        self.model_name = model_name
         self.task_name = kwargs['task_name']
         self.logger_platform = kwargs['logger_platform']
+        self.show_heatmaps = kwargs['show_heatmaps']
         self.data_dir = kwargs['data_dir']
         self.batch_size = kwargs['batch_size']
         self.num_input_channels = kwargs['num_input_channels']
@@ -296,6 +297,11 @@ class PTBXLClassificationModel(LightningModule):
         val_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
+        if self.show_heatmaps:
+            print(f'Logging heatmaps - this might take some time...')
+            with torch.set_grad_enabled(True):
+                self.visualize_best_and_worst_heatmaps(probs.numpy(), targets.numpy())
+            print(f'...done logging heatmaps.')
         f_max = metric_summary(targets.numpy(), probs.numpy())[0]
         self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
@@ -307,6 +313,79 @@ class PTBXLClassificationModel(LightningModule):
                 'val_epoch_f_max': f_max
             }
         }
+
+    def visualize_best_and_worst_heatmaps(self, test_probs, test_targets):
+        label_mapping = {k: i for i, k in enumerate(self.labels)}
+        test_diffs = np.abs(test_probs - test_targets)
+        for label_name, label_index in label_mapping.items():
+            test_label_targets = test_targets[:, label_index]
+
+            test_label_diffs = test_diffs[:, label_index].copy()
+            # Best positives, worst positives
+            positive_mask = test_label_targets == 1
+            test_label_diffs[~positive_mask] = 1.1
+            best_indices = test_label_diffs.argsort()[:3]
+            test_label_diffs[~positive_mask] = -0.1
+            test_label_diffs *= -1
+            worst_indices = test_label_diffs.argsort()[:3]
+            best_test_positive_datapoints = [self.val_dataset[i] for i in best_indices]
+            worst_test_positive_datapoints = [self.val_dataset[i] for i in worst_indices]
+
+            test_label_diffs = test_diffs[:, label_index].copy()
+            # Best negatives, worst negatives
+            negative_mask = test_label_targets == 0
+            test_label_diffs[~negative_mask] = 1.1
+            best_indices = test_label_diffs.argsort()[:3]
+            test_label_diffs[~negative_mask] = -0.1
+            test_label_diffs *= -1
+            worst_indices = test_label_diffs.argsort()[:3]
+            best_test_negative_datapoints = [self.val_dataset[i] for i in best_indices]
+            worst_test_negative_datapoints = [self.val_dataset[i] for i in worst_indices]
+
+            best_test_positive_figs = [
+                compute_and_show_heatmap(
+                    self.model.model, 'pool3',
+                    datapoint, label_mapping, class_of_concern=label_name,
+                    show_fig=False, figsize=(10, 40)
+                ) for datapoint in best_test_positive_datapoints
+            ]
+            self.logger.plot_figures({
+                f'{label_name} Present/Best (Rank {i})': fig
+                for i, fig in enumerate(best_test_positive_figs)
+            })
+            worst_test_positive_figs = [
+                compute_and_show_heatmap(
+                    self.model.model, 'pool3',
+                    datapoint, label_mapping, class_of_concern=label_name,
+                    show_fig=False, figsize=(10, 40)
+                ) for datapoint in worst_test_positive_datapoints
+            ]
+            self.logger.plot_figures({
+                f'{label_name} Present/Worst (Rank {i})': fig
+                for i, fig in enumerate(worst_test_positive_figs)
+            })
+            best_test_negative_figs = [
+                compute_and_show_heatmap(
+                    self.model.model, 'pool3',
+                    datapoint, label_mapping, class_of_concern=label_name,
+                    show_fig=False, figsize=(10, 40)
+                ) for datapoint in best_test_negative_datapoints
+            ]
+            self.logger.plot_figures({
+                f'{label_name} Absent/Best (Rank {i})': fig
+                for i, fig in enumerate(best_test_negative_figs)
+            })
+            worst_test_negative_figs = [
+                compute_and_show_heatmap(
+                    self.model.model, 'pool3',
+                    datapoint, label_mapping, class_of_concern=label_name,
+                    show_fig=False, figsize=(10, 40)
+                ) for datapoint in worst_test_negative_datapoints
+            ]
+            self.logger.plot_figures({
+                f'{label_name} Absent/Worst (Rank {i})': fig
+                for i, fig in enumerate(worst_test_negative_figs)
+            })
 
     def configure_optimizers(self):
         return torch.optim.Adam([

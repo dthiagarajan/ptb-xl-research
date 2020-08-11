@@ -13,11 +13,18 @@ class TensorBoardLogger(TensorBoardLogger):
         labeled_figs = confusion_matrix(y_true, y_pred, labels)
         for k, v in labeled_figs.items():
             self.experiment.add_figure(f'Confusion Matrix: {k}', v)
+        plt.close('all')
 
     def plot_roc(self, y_true, y_pred, labels):
         labeled_figs = roc(y_true, y_pred, labels)
         for k, v in labeled_figs.items():
             self.experiment.add_figure(f'ROC Curve: {k}', v)
+        plt.close('all')
+
+    def plot_figures(self, figure_dict):
+        for k, v in figure_dict.items():
+            self.experiment.add_figure(k, v)
+        plt.close('all')
 
 
 def confusion_matrix(y_true, y_pred, classes, title='Confusion matrix', cmap=plt.cm.Blues):

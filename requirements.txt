@@ -1,3 +1,4 @@
+opencv-python
 pytorch-lightning
 torch
 torchvision

@@ -25,6 +25,7 @@ def get_args():
     parser.add_argument('--checkpoint_models', type=bool, default=False)
     parser.add_argument('--early_stopping', type=bool, default=False)
     parser.add_argument('--find_lr', type=bool, default=False)
+    parser.add_argument('--show_heatmaps', type=bool, default=False)
     parser = PTBXLClassificationModel.add_model_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
     return parser.parse_args()
@@ -34,17 +35,6 @@ if __name__ == '__main__':
     args = get_args()
     seed_everything(31)
     model = PTBXLClassificationModel(**vars(args))
-    early_stopping_callback = EarlyStopping(
-        verbose=True,
-        monitor='val_epoch_loss',
-        mode='min',
-        patience=5
-    ) if args.early_stopping else None
-    checkpoint_callback = MultiMetricModelCheckpoint(
-        verbose=True,
-        monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
-        modes=['min', 'max', 'max']
-    ) if args.checkpoint_models else None
 
     if args.find_lr:
         trainer = Trainer()
@@ -60,6 +50,19 @@ if __name__ == '__main__':
         logger = WandbLogger(project="ptb-xl")
     elif args.logger_platform == 'tensorboard':
         logger = TensorBoardLogger('./lightning_logs', name='')
+
+    early_stopping_callback = EarlyStopping(
+        verbose=True,
+        monitor='val_epoch_loss',
+        mode='min',
+        patience=5
+    ) if args.early_stopping else None
+    checkpoint_callback = MultiMetricModelCheckpoint(
+        filepath=f'./lightning_logs/version_{logger.version}/checkpoints/''{epoch}',
+        verbose=True,
+        monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
+        modes=['min', 'max', 'max']
+    ) if args.checkpoint_models else None
 
     # Resetting trainer due to some issue with threading otherwise
     trainer = Trainer.from_argparse_args(

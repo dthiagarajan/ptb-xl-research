@@ -1,4 +1,5 @@
 import itertools
+import matplotlib.pyplot as plt
 import numpy as np
 from pytorch_lightning.loggers import WandbLogger
 import sklearn.metrics as metrics
@@ -24,6 +25,10 @@ class WandbLogger(WandbLogger):
             )
             for i, label in enumerate(labels)
         })
+
+    def plot_figures(self, figure_dict):
+        wandb.log({k: wandb.Image(v) for k, v in figure_dict.items()})
+        plt.close('all')
 
 
 def confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, labels: np.ndarray):
