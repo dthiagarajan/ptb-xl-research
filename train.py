@@ -37,6 +37,7 @@ if __name__ == '__main__':
     model = PTBXLClassificationModel(**vars(args))
 
     if args.find_lr:
+        print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
         trainer = Trainer()
         lr_finder = trainer.lr_find(model)
         suggested_lr = lr_finder.suggestion()

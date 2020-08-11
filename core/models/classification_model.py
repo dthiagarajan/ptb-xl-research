@@ -43,7 +43,11 @@ class PTBXLClassificationModel(LightningModule):
         self.num_input_channels = kwargs['num_input_channels']
         self.num_classes = kwargs['num_classes']
         self.num_workers = kwargs['num_workers']
-        self.lr = kwargs['lr']
+        self.lr = sorted(kwargs['lr'])
+        if len(self.lr) == 1:
+            self.lr = self.lr[0]
+        self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
+        self.max_epochs = kwargs['max_epochs']
         self.model = self.initialize_model(
             self.model_name, self.num_input_channels, self.num_classes
         )
@@ -387,10 +391,43 @@ class PTBXLClassificationModel(LightningModule):
                 for i, fig in enumerate(worst_test_negative_figs)
             })
 
+    def get_param_lr_maps(self, lrs):
+        """ Output parameter LR mappings for setting up an optimizer for `model`."""
+        body_parameters = [param for (_, param) in self.model.model.named_parameters()]
+        param_lr_mappings = []
+        incr_size = len(body_parameters) // (len(lrs) - 1)
+        for i in range(0, len(body_parameters), incr_size):
+            submodel_lrs = np.geomspace(
+                lrs[i // incr_size], lrs[(i // incr_size) + 1],
+                len(body_parameters[i:i + incr_size])
+            )
+            param_lr_mappings.extend([
+                {'params': bp, 'lr': submodel_lr} for bp, submodel_lr in
+                zip(body_parameters[i:i + incr_size], submodel_lrs)
+            ])
+        return param_lr_mappings, [plm['lr'] for plm in param_lr_mappings]
+
     def configure_optimizers(self):
-        return torch.optim.Adam([
-            {'params': self.model.parameters(), 'lr': self.lr},
-        ])
+        if not hasattr(self, 'train_data'):
+            self.prepare_data()
+        if type(self.lr) is float:
+            optimizer = torch.optim.AdamW([{'params': self.model.parameters(), 'lr': self.lr}])
+        else:
+            param_lr_mappings, self.lr = self.get_param_lr_maps(self.lr)
+            optimizer = torch.optim.AdamW(param_lr_mappings)
+        if self.use_one_cycle_lr_scheduler:
+            return (
+                [optimizer],
+                [
+                    torch.optim.lr_scheduler.OneCycleLR(
+                        optimizer, self.lr, epochs=self.max_epochs,
+                        steps_per_epoch=int(np.ceil(len(self.train_dataset) / self.batch_size)),
+                        div_factor=1e2
+                    )
+                ]
+            )
+        else:
+            return optimizer
 
     def prepare_data(self):
         if (
@@ -479,6 +516,7 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--num_input_channels', type=int, default=12)
         parser.add_argument('--num_classes', type=int, default=5)
         parser.add_argument('--num_workers', type=int, default=0)
-        parser.add_argument('--lr', type=float, default=1e-3)
+        parser.add_argument('--lr', nargs='+', type=float, default=[1e-3])
+        parser.add_argument('--use_one_cycle_lr_scheduler', type=bool, default=False)
         parser.add_argument('--sampling_rate', type=int, default=100)
         return parser
