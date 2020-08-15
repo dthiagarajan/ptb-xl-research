@@ -4,7 +4,6 @@ import numpy as np
 from pathlib import Path
 from pytorch_lightning.core.lightning import LightningModule
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 
@@ -18,6 +17,7 @@ from core.data.transforms import (
 from core.data.utils import load_all_data, split_all_data
 from core.metrics import AUC, metric_summary
 import core.models as ptbxl_models
+from core.models import loss_functions
 from core.models.wrappers import TTAWrapper
 
 
@@ -30,6 +30,7 @@ class PTBXLClassificationModel(LightningModule):
         'resnext50_32x4d', 'resnext101_32x8d',
         'wide_resnet50_2', 'wide_resnet101_2'
     ]
+    allowed_loss_function_components = ['bce_loss', 'f1_loss', 'focal_loss']
 
     def __init__(self, model_name, *args, **kwargs):
         super(PTBXLClassificationModel, self).__init__()
@@ -52,7 +53,7 @@ class PTBXLClassificationModel(LightningModule):
             self.model_name, self.num_input_channels, self.num_classes
         )
         self.sampling_rate = kwargs['sampling_rate']
-        self.loss = nn.BCELoss()
+        self.loss = self.get_loss_function(**kwargs)
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
@@ -62,6 +63,31 @@ class PTBXLClassificationModel(LightningModule):
         return TTAWrapper(getattr(ptbxl_models, model_name)(
             num_input_channels=num_input_channels, num_classes=num_classes
         ))
+
+    def get_loss_function(self, loss_function='bce_loss', **kwargs):
+        loss_component_functions = []
+        for loss_component in loss_function.split('+'):
+            subloss_components = [slc.strip() for slc in loss_component.strip().split('*')]
+            assert len(subloss_components) <= 2, \
+                f'Cannot specify more than 2 factors (raised on {loss_component}).'
+            float_factor, subloss_func = 1.0, None
+            for factor in subloss_components:
+                try:
+                    float_factor = float(factor)
+                except ValueError:
+                    assert factor in self.allowed_loss_function_components, \
+                        f'Loss function term must be one of {self.allowed_loss_function_components}'
+                    subloss_func = loss_functions.loss_function_factory(factor, **kwargs)
+
+            def loss_component_function(y_pred, y_true):
+                return float_factor * subloss_func(y_pred, y_true)
+
+            loss_component_functions.append(loss_component_function)
+
+        def combined_loss_function(y_pred, y_true):
+            return sum([lcf(y_pred, y_true) for lcf in loss_component_functions])
+
+        return combined_loss_function
 
     def log_hyperparams(self):
         if self.logger_platform == 'tensorboard':
@@ -517,6 +543,9 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--num_classes', type=int, default=5)
         parser.add_argument('--num_workers', type=int, default=0)
         parser.add_argument('--lr', nargs='+', type=float, default=[1e-3])
+        parser.add_argument('--loss_function', type=str, default='bce_loss')
+        parser.add_argument('--focal_loss_alpha', type=float, default=1.0)
+        parser.add_argument('--focal_loss_gamma', type=float, default=2.0)
         parser.add_argument('--use_one_cycle_lr_scheduler', type=bool, default=False)
         parser.add_argument('--sampling_rate', type=int, default=100)
         return parser

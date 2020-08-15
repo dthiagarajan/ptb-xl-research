@@ -2,8 +2,13 @@
 Example usage:
 python train.py --model_name Simple1DCNN --fast_dev_run True
 python train.py --model_name resnet18 --fast_dev_run True
+
 To run with a single GPU:
 python train.py --model_name resnet18 --fast_dev_run True --gpus 1
+
+To run with a custom loss function:
+python train.py --model_name Simple1DCNN --fast_dev_run True \
+    --loss_function '2*focal_loss + f1_loss'
 """
 import argparse
 from pytorch_lightning import seed_everything, Trainer
