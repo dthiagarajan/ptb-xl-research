@@ -15,6 +15,7 @@ from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 
 from core.callbacks import MultiMetricModelCheckpoint
+from core.data import PTBXLDataModule
 from core.loggers import TensorBoardLogger, WandbLogger
 from core.models import PTBXLClassificationModel
 
@@ -32,6 +33,7 @@ def get_args():
     parser.add_argument('--find_lr', type=bool, default=False)
     parser.add_argument('--show_heatmaps', type=bool, default=False)
     parser = PTBXLClassificationModel.add_model_specific_args(parser)
+    parser = PTBXLDataModule.add_data_specific_args(parser)
     parser = Trainer.add_argparse_args(parser)
     return parser.parse_args()
 
@@ -40,6 +42,10 @@ if __name__ == '__main__':
     args = get_args()
     seed_everything(31)
     model = PTBXLClassificationModel(**vars(args))
+    data_module = PTBXLDataModule(
+        args.data_dir, args.sampling_rate, args.task_name,
+        batch_size=args.batch_size, num_workers=args.num_workers
+    )
 
     if args.find_lr:
         print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
@@ -75,7 +81,7 @@ if __name__ == '__main__':
         args, checkpoint_callback=checkpoint_callback, early_stop_callback=early_stopping_callback,
         deterministic=True, logger=logger
     )
-    trainer.fit(model)
+    trainer.fit(model, data_module)
     if args.checkpoint_models:
         print(f'Best model path: {checkpoint_callback.best_model_path}.')
-    trainer.test(model)
+    trainer.test(model, data_module)

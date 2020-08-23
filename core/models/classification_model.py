@@ -1,24 +1,13 @@
 import argparse
-from functools import partial
 import numpy as np
-from pathlib import Path
 from pytorch_lightning.core.lightning import LightningModule
 import torch
-from torch.utils.data import DataLoader
-import torchvision.transforms as transforms
 
 from core.analysis.visualization import compute_and_show_heatmap
-from core.data.dataset import ECGDataset
-from core.data.transforms import (
-    binarize_labels,
-    window_sampling_transform,
-    window_segmenting_test_transform
-)
-from core.data.utils import load_all_data, split_all_data
 from core.metrics import AUC, metric_summary
 import core.models as ptbxl_models
 from core.models import loss_functions
-from core.models.wrappers import TTAWrapper
+from core.models.wrappers import MetricModelWrapper, MixupWrapper, TTAWrapper
 
 
 class PTBXLClassificationModel(LightningModule):
@@ -49,20 +38,54 @@ class PTBXLClassificationModel(LightningModule):
             self.lr = self.lr[0]
         self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
         self.max_epochs = kwargs['max_epochs']
+        self.loss = self.get_loss_function(**kwargs)
+        self.metric_functions = self.initialize_metric_functions()
         self.model = self.initialize_model(
-            self.model_name, self.num_input_channels, self.num_classes
+            self.model_name, self.num_input_channels, self.num_classes,
+            mixup=kwargs['mixup'], mixup_layer=kwargs['mixup_layer']
         )
         self.sampling_rate = kwargs['sampling_rate']
-        self.loss = self.get_loss_function(**kwargs)
         self.save_hyperparameters(*kwargs.keys())
 
-        self.train_step, self.val_step = 0, 0
+        self.train_step, self.val_step, self.test_step = 0, 0, 0
         self.best_metrics = None
 
-    def initialize_model(self, model_name, num_input_channels, num_classes):
-        return TTAWrapper(getattr(ptbxl_models, model_name)(
+    def initialize_metric_functions(self):
+        def acc(y_pred, y_true):
+            return ((y_pred > 0.5) == y_true).sum().float() / (len(y_true) * len(y_true[0]))
+
+        def auc(y_pred, y_true):
+            return torch.Tensor([AUC(y_true.cpu().numpy(), y_pred.detach().cpu().numpy())])
+
+        return {
+            'loss': self.loss,
+            'acc': acc,
+            'auc': auc,
+            'probs': lambda probs, targets: probs,
+            'targets': lambda probs, targets: targets
+        }
+
+    def initialize_model(
+        self,
+        model_name,
+        num_input_channels,
+        num_classes,
+        mixup=False,
+        mixup_alpha=0.4,
+        mixup_layer=0
+    ):
+        model = TTAWrapper(getattr(ptbxl_models, model_name)(
             num_input_channels=num_input_channels, num_classes=num_classes
         ))
+        if mixup is False:
+            return MetricModelWrapper(model, metric_functions=self.metric_functions)
+        else:
+            return MixupWrapper(
+                model,
+                metric_functions=self.metric_functions,
+                mixup_layer=mixup_layer,
+                alpha=mixup_alpha
+            )
 
     def get_loss_function(self, loss_function='bce_loss', **kwargs):
         loss_component_functions = []
@@ -136,28 +159,20 @@ class PTBXLClassificationModel(LightningModule):
         )
 
     def forward(self, x):
-        return torch.sigmoid(self.model(x))
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        probabilities = self(x)
-        loss = self.loss(probabilities, y.float())
-        acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
-        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        output_metrics = self(batch)
         tensorboard_logs = {
-            'Train/train_step_loss': loss, 'Train/train_step_acc': acc, 'Train/train_step_auc': auc
+            f'Train/train_step_{metric_name}': output_metrics[metric_name]
+            for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
         self.logger.log_metrics(tensorboard_logs, self.train_step)
         self.train_step += 1
 
-        return {
-            'loss': loss,
-            'acc': acc,
-            'auc': auc,
-            'probs': probabilities,
-            'targets': y,
-            'progress_bar': tensorboard_logs
-        }
+        output_metrics['progress_bar'] = tensorboard_logs
+        return output_metrics
 
     def training_epoch_end(self, outputs):
         loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
@@ -216,26 +231,16 @@ class PTBXLClassificationModel(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        probabilities = self(x)
-        loss = self.loss(probabilities, y.float())
-        acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
-        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        output_metrics = self(batch)
         tensorboard_logs = {
-            'Validation/val_step_loss': loss,
-            'Validation/val_step_acc': acc,
-            'Validation/val_step_auc': auc,
+            f'Validation/val_step_{metric_name}': output_metrics[metric_name]
+            for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
         self.logger.log_metrics(tensorboard_logs, self.val_step)
         self.val_step += 1
 
-        return {
-            'loss': loss,
-            'acc': acc,
-            'auc': auc,
-            'probs': probabilities,
-            'targets': y,
-            'progress_bar': tensorboard_logs
-        }
+        output_metrics['progress_bar'] = tensorboard_logs
+        return output_metrics
 
     def validation_epoch_end(self, outputs):
         val_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
@@ -302,29 +307,21 @@ class PTBXLClassificationModel(LightningModule):
 
     def test_step(self, batch, batch_idx):
         x, y = batch
-        probabilities = self(x)
-        loss = self.loss(probabilities, y.float())
-        acc = ((probabilities > 0.5) == y).sum().float() / (len(y) * len(y[0]))
-        auc = torch.Tensor([AUC(y.cpu().numpy(), probabilities.detach().cpu().numpy())])
+        output_metrics = self(batch)
         tensorboard_logs = {
-            'Validation/val_step_loss': loss,
-            'Validation/val_step_acc': acc,
-            'Validation/val_step_auc': auc,
+            f'Test/test_step_{metric_name}': output_metrics[metric_name]
+            for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
+        self.logger.log_metrics(tensorboard_logs, self.test_step)
+        self.test_step += 1
 
-        return {
-            'loss': loss,
-            'acc': acc,
-            'auc': auc,
-            'probs': probabilities,
-            'targets': y,
-            'progress_bar': tensorboard_logs
-        }
+        output_metrics['progress_bar'] = tensorboard_logs
+        return output_metrics
 
     def test_epoch_end(self, outputs):
-        val_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        val_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
-        val_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
+        test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
+        test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
+        test_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
         if self.show_heatmaps:
@@ -337,10 +334,10 @@ class PTBXLClassificationModel(LightningModule):
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
         return {
             'log': {
-                'val_epoch_loss': val_loss_mean,
-                'val_epoch_acc': val_acc_mean,
-                'val_epoch_auc': val_auc_mean,
-                'val_epoch_f_max': f_max
+                'test_epoch_loss': test_loss_mean,
+                'test_epoch_acc': test_acc_mean,
+                'test_epoch_auc': test_auc_mean,
+                'test_epoch_f_max': f_max
             }
         }
 
@@ -455,97 +452,21 @@ class PTBXLClassificationModel(LightningModule):
         else:
             return optimizer
 
-    def prepare_data(self):
-        if (
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy').exists() and
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_labels.npy').exists() and
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_data.npy').exists() and
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy').exists() and
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy').exists()
-        ):
-            valid_x_train = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy'))
-            valid_y_train = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_labels.npy'))
-            valid_x_test = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_data.npy'))
-            valid_y_test = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy'))
-            self.labels = np.load(Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy'), allow_pickle=True)
-
-        else:
-            X, Y = load_all_data('', self.sampling_rate)
-            X_train, y_train, X_test, y_test = split_all_data(X, Y)
-            valid_x_train, valid_y_train, mlb = binarize_labels(
-                X_train, y_train, self.task_name
-            )
-            valid_x_test, valid_y_test, _ = binarize_labels(
-                X_test, y_test, self.task_name, mlb
-            )
-            self.labels = mlb.classes_
-
-            Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name).mkdir(parents=True, exist_ok=True)
-            np.save(
-                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy'), valid_x_train
-            )
-            np.save(
-                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_labels.npy'), valid_y_train
-            )
-            np.save(
-                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_data.npy'), valid_x_test
-            )
-            np.save(
-                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'test_labels.npy'), valid_y_test
-            )
-            np.save(
-                Path(self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'label_names.npy'), mlb.classes_
-            )
-
-        # Conv1d expects shape (N, C_in, L_in), so we set signal length as the last dimension
-        train_transform = transforms.Compose([
-            window_sampling_transform(self.sampling_rate * 10, self.sampling_rate * 2),
-            np.transpose,  # Setting signal length as the last dimension
-            torch.from_numpy
-        ])
-        test_transform = transforms.Compose([
-            window_segmenting_test_transform(self.sampling_rate * 10, self.sampling_rate * 2),
-            partial(np.transpose, axes=(0, 2, 1)),  # Setting signal length as the last dimension
-            torch.from_numpy
-        ])
-        self.train_dataset = ECGDataset(valid_x_train, valid_y_train, transform=train_transform)
-        self.val_dataset = ECGDataset(valid_x_test, valid_y_test, transform=test_transform)
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=True,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=False,
-        )
-
-    def test_dataloader(self):
-        return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=False,
-        )
-
     @staticmethod
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument('--model_name', type=str, default='Simple1DCNN')
-        parser.add_argument('--task_name', type=str, default='diagnostic_superclass')
         parser.add_argument(
             '--logger_platform', type=str, choices=['tensorboard', 'wandb'], default='tensorboard'
         )
-        parser.add_argument('--data_dir', type=str, default='./')
-        parser.add_argument('--batch_size', type=int, default=128)
         parser.add_argument('--num_input_channels', type=int, default=12)
         parser.add_argument('--num_classes', type=int, default=5)
-        parser.add_argument('--num_workers', type=int, default=0)
         parser.add_argument('--lr', nargs='+', type=float, default=[1e-3])
         parser.add_argument('--loss_function', type=str, default='bce_loss')
         parser.add_argument('--focal_loss_alpha', type=float, default=1.0)
         parser.add_argument('--focal_loss_gamma', type=float, default=2.0)
         parser.add_argument('--use_one_cycle_lr_scheduler', type=bool, default=False)
-        parser.add_argument('--sampling_rate', type=int, default=100)
+        parser.add_argument('--mixup', type=bool, default=False)
+        parser.add_argument('--mixup_layer', type=int, default=0)
+        parser.add_argument('--mixup_alpha', type=float, default=0.4)
         return parser
