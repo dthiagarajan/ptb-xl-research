@@ -107,37 +107,45 @@ class MixupWrapper(MetricModelWrapper):
         alpha: float = 0.4,
         mixup_layer: int = 0
     ):
-        model_children = list(model.model.children())
-        sequential_model = nn.Sequential(
-            *[
-                TTAWrapper(child, keepdim=True if i < len(model_children) - 1 else False)
-                for i, child in enumerate(model_children)
-            ]
-        )
         super(MixupWrapper, self).__init__(
-            sequential_model, metric_functions=metric_functions,
+            model, metric_functions=metric_functions,
             activation_function=activation_function
         )
+        model_children = list(model.model.children())
         self.alpha = alpha
         self.mixup_layer = mixup_layer
         assert self.mixup_layer >= 0, f'mixup_layer must be greater than 0: specified {mixup_layer}'
-        assert self.mixup_layer < len(self.model), \
+        assert self.mixup_layer < len(model_children), \
             f'mixup_layer must be less than the number of model layers: specified {mixup_layer}'
+
+        self.first_model = None
         if self.mixup_layer == 0:
             print(
                 f'Mixup is being done on the data. If you want to mixup a particular layer input, '
                 f'please specify mixup_layer > 0 corresponding to the index of that layer.'
             )
+        else:
+            self.first_model = nn.Sequential(
+                *[TTAWrapper(child, keepdim=True) for child in model_children[:self.mixup_layer]]
+            )
+        self.second_model = nn.Sequential(
+            *[
+                TTAWrapper(
+                    child, keepdim=True if i < len(model_children[self.mixup_layer:]) - 1 else False
+                )
+                for i, child in enumerate(model_children[self.mixup_layer:])
+            ]
+        )
 
     def forward(self, batch):
         x, y = batch
         if self.training:  # TODO: this takes a long time, profile which step is the bottleneck
             out = x
             mixed_metric_functions = None
-            for i, layer in enumerate(self.model):
-                if i == self.mixup_layer:
-                    out, mixed_y, lam, mixed_metric_functions = self.mixup(out, y, alpha=self.alpha)
-                out = layer(out)
+            if self.first_model is not None:
+                out = self.first_model(out)
+            out, mixed_y, lam, mixed_metric_functions = self.mixup(out, y, alpha=self.alpha)
+            out = self.second_model(out)
             out = self.activation_function(out)
             output_metrics = {}
             for metric_name in mixed_metric_functions:
