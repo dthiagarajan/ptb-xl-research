@@ -38,9 +38,18 @@ class TTAWrapper(BaseModelWrapper):
     Args:
         model (nn.Module): model to produce embeddings
     """
+    def __init__(self, model: nn.Module, keepdim: bool = False):
+        super(TTAWrapper, self).__init__(model)
+        self.keepdim = keepdim
+
     def forward(self, x):
         if len(x.shape) == 3:
             return self.model(x)
+        elif len(x.shape) == 4 and self.keepdim:
+            bs, tta_n, num_channels, signal_length = x.shape
+            output = self.model(x.view(-1, num_channels, signal_length))
+            _, num_channels, signal_length = output.shape
+            return output.view(bs, tta_n, num_channels, signal_length)
         else:
             bs, tta_n, num_channels, signal_length = x.shape
             output = self.model(x.view(-1, num_channels, signal_length)).view(bs, tta_n, -1)
@@ -98,7 +107,13 @@ class MixupWrapper(MetricModelWrapper):
         alpha: float = 0.4,
         mixup_layer: int = 0
     ):
-        sequential_model = nn.Sequential(*[TTAWrapper(child) for child in list(model.children())])
+        model_children = list(model.model.children())
+        sequential_model = nn.Sequential(
+            *[
+                TTAWrapper(child, keepdim=True if i < len(model_children) - 1 else False)
+                for i, child in enumerate(model_children)
+            ]
+        )
         super(MixupWrapper, self).__init__(
             sequential_model, metric_functions=metric_functions,
             activation_function=activation_function
@@ -130,7 +145,6 @@ class MixupWrapper(MetricModelWrapper):
                     output_metrics[metric_name] = self.metric_functions[metric_name](out, mixed_y)
                 except ValueError:  # In case non-binary targets don't make sense
                     output_metrics[metric_name] = 0.
-
         else:
             output_metrics = super().forward(batch)
 
