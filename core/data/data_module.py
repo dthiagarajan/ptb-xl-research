@@ -97,6 +97,12 @@ class PTBXLDataModule(pl.LightningDataModule):
             shuffle=False,
         )
 
+    def test_dataloader(self):
+        return DataLoader(
+            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+            shuffle=False,
+        )
+
     @staticmethod
     def add_data_specific_args(parent_parser):
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
