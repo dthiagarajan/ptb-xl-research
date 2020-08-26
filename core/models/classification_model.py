@@ -47,7 +47,7 @@ class PTBXLClassificationModel(LightningModule):
         self.sampling_rate = kwargs['sampling_rate']
         self.save_hyperparameters(*kwargs.keys())
 
-        self.train_step, self.val_step, self.test_step = 0, 0, 0
+        self.train_step, self.val_step = 0, 0
         self.best_metrics = None
 
     def initialize_metric_functions(self):
@@ -312,9 +312,6 @@ class PTBXLClassificationModel(LightningModule):
             f'Test/test_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        self.logger.log_metrics(tensorboard_logs, self.test_step)
-        self.test_step += 1
-
         output_metrics['progress_bar'] = tensorboard_logs
         return output_metrics
 
