@@ -147,7 +147,7 @@ class PTBXLClassificationModel(LightningModule):
                 self.best_metrics['best_epoch'] = self.current_epoch
         self.log_hyperparams()
 
-    def on_fit_start(self):
+    def on_fit_start(self, *args, **kwargs):
         # Need this function to have best metrics being logged in hyperparameters tab of TB
         self.update_hyperparams_and_metrics(
             {
