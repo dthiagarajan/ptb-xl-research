@@ -9,6 +9,12 @@ class TensorBoardLogger(TensorBoardLogger):
     def add_scalars(self, main_tag, tag_scalar_dict, global_step=None, walltime=None):
         self.experiment.add_scalars(main_tag, tag_scalar_dict, global_step, walltime)
 
+    def log_hyperparams(self, *args, **kwargs):
+        if not self.testing:
+            super(TensorBoardLogger, self).log_hyperparams(*args, **kwargs)
+        else:
+            print("Not logging to Tensorboard in test phase.")
+
     def plot_confusion_matrix(self, y_true, y_pred, labels):
         labeled_figs = confusion_matrix(y_true, y_pred, labels)
         for k, v in labeled_figs.items():

@@ -147,8 +147,9 @@ class PTBXLClassificationModel(LightningModule):
                 self.best_metrics['best_epoch'] = self.current_epoch
         self.log_hyperparams()
 
-    def on_fit_start(self, *args, **kwargs):
+    def setup(self, stage):
         # Need this function to have best metrics being logged in hyperparameters tab of TB
+        self.logger.testing = (stage == 'test')
         self.update_hyperparams_and_metrics(
             {
                 'val_epoch_loss': float('inf'),
