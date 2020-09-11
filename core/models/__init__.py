@@ -1,3 +1,4 @@
+from .callback_model import CallbackModel  # noqa: F401
 from .classification_model import PTBXLClassificationModel  # noqa: F401
 from .cnn import Simple1DCNN  # noqa: F401
 from .resnet import (  # noqa: F401

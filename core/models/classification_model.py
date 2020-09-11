@@ -1,13 +1,14 @@
 import argparse
 import numpy as np
+import pandas as pd
 from pytorch_lightning.core.lightning import LightningModule
 import torch
 
 from core.analysis.visualization import compute_and_show_heatmap
-from core.metrics import AUC, metric_summary
+from core.callbacks.model_callbacks import callback_factory
+from core.metrics import metric_summary
 import core.models as ptbxl_models
-from core.models import loss_functions
-from core.models.wrappers import MetricModelWrapper, MixupWrapper, TTAWrapper
+from core.models import CallbackModel
 
 
 class PTBXLClassificationModel(LightningModule):
@@ -19,7 +20,6 @@ class PTBXLClassificationModel(LightningModule):
         'resnext50_32x4d', 'resnext101_32x8d',
         'wide_resnet50_2', 'wide_resnet101_2'
     ]
-    allowed_loss_function_components = ['bce_loss', 'f1_loss', 'focal_loss']
 
     def __init__(self, model_name, *args, **kwargs):
         super(PTBXLClassificationModel, self).__init__()
@@ -38,79 +38,21 @@ class PTBXLClassificationModel(LightningModule):
             self.lr = self.lr[0]
         self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
         self.max_epochs = kwargs['max_epochs']
-        self.loss = self.get_loss_function(**kwargs)
-        self.metric_functions = self.initialize_metric_functions()
-        self.model = self.initialize_model(
-            self.model_name, self.num_input_channels, self.num_classes,
-            mixup=kwargs['mixup'], mixup_layer=kwargs['mixup_layer']
-        )
+        self.model = self.initialize_model(model_name, **kwargs)
         self.sampling_rate = kwargs['sampling_rate']
+        self.profile = kwargs['profiler']
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
         self.best_metrics = None
 
-    def initialize_metric_functions(self):
-        def acc(y_pred, y_true):
-            return ((y_pred > 0.5) == y_true).sum().float() / (len(y_true) * len(y_true[0]))
-
-        def auc(y_pred, y_true):
-            return torch.Tensor([AUC(y_true.cpu().numpy(), y_pred.detach().cpu().numpy())])
-
-        return {
-            'loss': self.loss,
-            'acc': acc,
-            'auc': auc,
-            'probs': lambda probs, targets: probs,
-            'targets': lambda probs, targets: targets
-        }
-
-    def initialize_model(
-        self,
-        model_name,
-        num_input_channels,
-        num_classes,
-        mixup=False,
-        mixup_alpha=0.4,
-        mixup_layer=0
-    ):
-        model = TTAWrapper(getattr(ptbxl_models, model_name)(
-            num_input_channels=num_input_channels, num_classes=num_classes
-        ))
-        if mixup is False:
-            return MetricModelWrapper(model, metric_functions=self.metric_functions)
-        else:
-            return MixupWrapper(
-                model,
-                metric_functions=self.metric_functions,
-                mixup_layer=mixup_layer,
-                alpha=mixup_alpha
-            )
-
-    def get_loss_function(self, loss_function='bce_loss', **kwargs):
-        loss_component_functions = []
-        for loss_component in loss_function.split('+'):
-            subloss_components = [slc.strip() for slc in loss_component.strip().split('*')]
-            assert len(subloss_components) <= 2, \
-                f'Cannot specify more than 2 factors (raised on {loss_component}).'
-            float_factor, subloss_func = 1.0, None
-            for factor in subloss_components:
-                try:
-                    float_factor = float(factor)
-                except ValueError:
-                    assert factor in self.allowed_loss_function_components, \
-                        f'Loss function term must be one of {self.allowed_loss_function_components}'
-                    subloss_func = loss_functions.loss_function_factory(factor, **kwargs)
-
-            def loss_component_function(y_pred, y_true):
-                return float_factor * subloss_func(y_pred, y_true)
-
-            loss_component_functions.append(loss_component_function)
-
-        def combined_loss_function(y_pred, y_true):
-            return sum([lcf(y_pred, y_true) for lcf in loss_component_functions])
-
-        return combined_loss_function
+    def initialize_model(self, model_name, **kwargs):
+        model = getattr(ptbxl_models, model_name)(
+            num_input_channels=kwargs['num_input_channels'], num_classes=kwargs['num_classes']
+        )
+        return CallbackModel(
+            model, callbacks=callback_factory(**kwargs), profile=kwargs['profiler']
+        )
 
     def log_hyperparams(self):
         if self.logger_platform == 'tensorboard':
@@ -159,12 +101,11 @@ class PTBXLClassificationModel(LightningModule):
             }
         )
 
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, batch, batch_idx):
+        return self.model.run(batch, batch_idx)
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        output_metrics = self(batch)
+        output_metrics = self(batch, batch_idx)
         tensorboard_logs = {
             f'Train/train_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
@@ -223,6 +164,21 @@ class PTBXLClassificationModel(LightningModule):
                 f'Train Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
             })
         self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
+        if self.profile and len(self.model.timings) > 0:
+            hook_reports = []
+            for hook_name in self.model.timings:
+                for callback_name, times in self.model.timings[hook_name].items():
+                    times = np.array(times)
+                    mean_time, sum_time = times.mean(), times.sum()
+                    hook_reports.append({
+                        'Callback Name': callback_name,
+                        'Mean time (s)': mean_time,
+                        'Sum time (s)': sum_time
+                    })
+            print(pd.DataFrame(hook_reports))
+            hook_reports = pd.DataFrame(hook_reports).set_index('Callback Name')
+            print(hook_reports)
+            self.model.timings = {}
         return {
             'train_epoch_loss': loss_mean,
             'train_epoch_acc': acc_mean,
@@ -231,8 +187,7 @@ class PTBXLClassificationModel(LightningModule):
         }
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        output_metrics = self(batch)
+        output_metrics = self(batch, batch_idx)
         tensorboard_logs = {
             f'Validation/val_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
@@ -296,19 +251,32 @@ class PTBXLClassificationModel(LightningModule):
                 'val_epoch_loss': val_loss_mean,
                 'val_epoch_acc': val_acc_mean,
                 'val_epoch_auc': val_auc_mean,
-                'val_epoch_f_max': f_max
+                'val_epoch_f_max': torch.tensor(f_max)
             }
         )
+        if self.profile and len(self.model.timings) > 0:
+            hook_reports = []
+            for hook_name in self.model.timings:
+                for callback_name, times in self.model.timings[hook_name].items():
+                    times = np.array(times)
+                    mean_time, sum_time = times.mean(), times.sum()
+                    hook_reports.append({
+                        'Callback Name': callback_name,
+                        'Mean time (s)': mean_time,
+                        'Sum time (s)': sum_time
+                    })
+            hook_reports = pd.DataFrame(hook_reports).set_index('Callback Name')
+            print(hook_reports)
+            self.model.timings = {}
         return {
             'val_epoch_loss': val_loss_mean,
             'val_epoch_acc': val_acc_mean,
             'val_epoch_auc': val_auc_mean,
-            'val_epoch_f_max': f_max
+            'val_epoch_f_max': torch.tensor(f_max)
         }
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        output_metrics = self(batch)
+        output_metrics = self(batch, batch_idx)
         tensorboard_logs = {
             f'Test/test_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
@@ -353,8 +321,12 @@ class PTBXLClassificationModel(LightningModule):
             test_label_diffs[~positive_mask] = -0.1
             test_label_diffs *= -1
             worst_indices = test_label_diffs.argsort()[:3]
-            best_test_positive_datapoints = [self.val_dataset[i] for i in best_indices]
-            worst_test_positive_datapoints = [self.val_dataset[i] for i in worst_indices]
+            best_test_positive_datapoints = [
+                self.trainer.datamodule.val_dataset[i] for i in best_indices
+            ]
+            worst_test_positive_datapoints = [
+                self.trainer.datamodule.val_dataset[i] for i in worst_indices
+            ]
 
             test_label_diffs = test_diffs[:, label_index].copy()
             # Best negatives, worst negatives
@@ -364,8 +336,12 @@ class PTBXLClassificationModel(LightningModule):
             test_label_diffs[~negative_mask] = -0.1
             test_label_diffs *= -1
             worst_indices = test_label_diffs.argsort()[:3]
-            best_test_negative_datapoints = [self.val_dataset[i] for i in best_indices]
-            worst_test_negative_datapoints = [self.val_dataset[i] for i in worst_indices]
+            best_test_negative_datapoints = [
+                self.trainer.datamodule.val_dataset[i] for i in best_indices
+            ]
+            worst_test_negative_datapoints = [
+                self.trainer.datamodule.val_dataset[i] for i in worst_indices
+            ]
 
             best_test_positive_figs = [
                 compute_and_show_heatmap(
