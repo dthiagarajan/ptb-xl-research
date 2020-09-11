@@ -207,7 +207,7 @@ class MultiMetricModelCheckpoint(ModelCheckpoint):
                     f'Can save best model only with {self.monitors} available, skipping.', RuntimeWarning
                 )
             elif self.check_monitor_top_k(current):
-                self._do_check_save(filepath, current, epoch)
+                self._do_check_save(filepath, current, epoch, trainer, pl_module)
             elif self.verbose > 0:
                 log.info(f'\nEpoch {epoch:05d}: {self.monitors}  was not in top {self.save_top_k}')
 
@@ -218,7 +218,7 @@ class MultiMetricModelCheckpoint(ModelCheckpoint):
             assert trainer.global_rank == 0, 'tried to make a checkpoint from non global_rank=0'
             self._save_model(filepath)
 
-    def _do_check_save(self, filepath, current, epoch):
+    def _do_check_save(self, filepath, current, epoch, trainer, pl_module):
         # remove kth
         del_list = []
         if len(self.best_k_models) == self.save_top_k and self.save_top_k > 0:
@@ -240,7 +240,7 @@ class MultiMetricModelCheckpoint(ModelCheckpoint):
                 f'\nEpoch {epoch:05d}: {self.monitors} reached'
                 f' {current} (best {self.best_model_score}), saving model to'
                 f' {filepath} as top {self.save_top_k}')
-        self._save_model(filepath)
+        self._save_model(filepath, trainer, pl_module)
 
         for cur_path in del_list:
             if cur_path != filepath:

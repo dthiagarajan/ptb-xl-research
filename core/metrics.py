@@ -67,7 +67,11 @@ def metric_summary(
         y_true, y_pred, thresholds
     )
     f_scores = 2 * (average_precisions * average_recalls) / (average_precisions + average_recalls)
-    auc = roc_auc_score(y_true, y_pred, average='macro')
+    try:
+        auc = roc_auc_score(y_true, y_pred, average='macro')
+    except ValueError:
+        print(f'Value error encountered, likely due to using mixup. Setting AUC to 0.')
+        auc = 0.
     return (
         f_scores[np.nanargmax(f_scores)],
         auc,
