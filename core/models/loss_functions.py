@@ -70,7 +70,7 @@ def focal_loss(
     Returns:
         torch.tensor: focal loss (scalar)
     """
-    bce_loss_term = F.binary_cross_entropy(y_pred, y_true, reduction='none')
+    bce_loss_term = F.binary_cross_entropy(y_pred.float(), y_true.float(), reduction='none')
     p_t = torch.exp(-bce_loss_term)
     loss = (alpha * ((1 - p_t) ** gamma) * bce_loss_term)
     if reduce:
