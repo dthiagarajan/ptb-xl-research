@@ -32,7 +32,7 @@ class TestMultiMetricModelCheckpoint:
         callback.filename = '{epoch}'
         callback.dirpath = './'
 
-        def mock_save_model(fp):
+        def mock_save_model(fp, trainer, pl_module):
             self.output_fp = fp
 
         monkeypatch.setattr(callback, "_save_model", mock_save_model)
@@ -41,12 +41,14 @@ class TestMultiMetricModelCheckpoint:
         assert self.output_fp == './epoch=1.ckpt'
 
     def test_do_check_save(self, monkeypatch, callback):
-        def mock_save_model(fp):
+        def mock_save_model(fp, trainer, pl_module):
             self.output_fp = fp
 
         monkeypatch.setattr(callback, "_save_model", mock_save_model)
 
-        callback._do_check_save('./dummy.pth', {'val_loss': 1.5, 'val_acc': 0.5}, 0)
+        callback._do_check_save('./dummy.pth', {'val_loss': 1.5, 'val_acc': 0.5}, 0, None, None)
         assert self.output_fp == './dummy.pth'
-        callback._do_check_save('./overwritten.pth', {'val_loss': 2.0, 'val_acc': 0.0}, 0)
+        callback._do_check_save(
+            './overwritten.pth', {'val_loss': 2.0, 'val_acc': 0.0}, 0, None, None
+        )
         assert self.output_fp == './overwritten.pth'
