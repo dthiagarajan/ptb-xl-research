@@ -48,11 +48,19 @@ if __name__ == '__main__':
     )
 
     if args.find_lr:
+        assert (  # noqa: F631
+            args.distributed_backend is None,
+            'LR find does not work properly with distributed backends'
+        )
         # Need to prepare dataloaders for LR find
         data_module.prepare_data()
         print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
         trainer = Trainer()
-        lr_finder = trainer.lr_find(model, train_dataloader=data_module.train_dataloader())
+        # This will take longer than a single epoch would take, but worth it for a more fine-grained
+        # LR check
+        lr_finder = trainer.lr_find(
+            model, train_dataloader=data_module.train_dataloader(), num_training=1000
+        )
         suggested_lr = lr_finder.suggestion()
         print(f'Found best LR of {suggested_lr:0.5f}.')
         model.lr = suggested_lr
