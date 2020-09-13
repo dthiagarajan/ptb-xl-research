@@ -48,9 +48,11 @@ if __name__ == '__main__':
     )
 
     if args.find_lr:
+        # Need to prepare dataloaders for LR find
+        data_module.prepare_data()
         print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
         trainer = Trainer()
-        lr_finder = trainer.lr_find(model)
+        lr_finder = trainer.lr_find(model, train_dataloader=data_module.train_dataloader())
         suggested_lr = lr_finder.suggestion()
         print(f'Found best LR of {suggested_lr:0.5f}.')
         model.lr = suggested_lr
