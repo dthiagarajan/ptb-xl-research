@@ -11,6 +11,7 @@ python train.py --model_name Simple1DCNN --fast_dev_run True \
     --loss_function '2*focal_loss + f1_loss'
 """
 import argparse
+import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 
@@ -52,17 +53,30 @@ if __name__ == '__main__':
             args.distributed_backend is None,
             'LR find does not work properly with distributed backends'
         )
-        # Need to prepare dataloaders for LR find
-        data_module.prepare_data()
-        print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
-        trainer = Trainer()
-        # This will take longer than a single epoch would take, but worth it for a more fine-grained
-        # LR check
-        lr_finder = trainer.lr_find(
-            model, train_dataloader=data_module.train_dataloader(), num_training=1000
-        )
-        suggested_lr = lr_finder.suggestion()
-        print(f'Found best LR of {suggested_lr:0.5f}.')
+        try:
+            lr_find_config = pd.read_json('./lr_find_archive.json', orient='index')
+        except ValueError:
+            print('Archive file does not exist, creating in this run.')
+            lr_find_config = pd.DataFrame()
+        if model.model.model.__class__.__name__ not in lr_find_config.index:
+            # Need to prepare dataloaders for LR find
+            data_module.prepare_data()
+            print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
+            trainer = Trainer()
+            # This will take longer than a single epoch would take, but worth it for a more
+            # fine-grained LR check
+            lr_finder = trainer.lr_find(
+                model, train_dataloader=data_module.train_dataloader(), num_training=1000
+            )
+            suggested_lr = lr_finder.suggestion()
+            print(f'Found best LR of {suggested_lr:0.5f}.')
+            for key, item in vars(args).items():
+                lr_find_config.loc[model.model.model.__class__.__name__, key] = item
+            lr_find_config.loc[model.model.model.__class__.__name__, 'lr'] = suggested_lr
+            lr_find_config.to_json('./lr_find_archive.json', orient='index')
+        else:
+            suggested_lr = float(lr_find_config.loc[model.model.model.__class__.__name__, 'lr'])
+            print(f'Reading LR {suggested_lr} from archive config.')
         model.lr = suggested_lr
         # Need to manually update, similar to doc.
         # Reference: https://pytorch-lightning.readthedocs.io/en/latest/lr_finder.html
