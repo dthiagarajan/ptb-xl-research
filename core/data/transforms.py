@@ -1,7 +1,19 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MultiLabelBinarizer
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
+
+
+class WindowSampler:
+    def __init__(self, window_size: int, signal_length: int):
+        self.window_size = window_size
+        self.signal_length = signal_length
+
+    def __call__(self, signal: np.ndarray):
+        assert len(signal) == self.signal_length
+        # Sample an index where window starting at that number can fit
+        index = np.random.randint(0, self.signal_length - self.window_size + 1)
+        return signal[index:index + self.window_size]
 
 
 def window_sampling_transform(signal_length: int, window_size: int):
@@ -17,14 +29,20 @@ def window_sampling_transform(signal_length: int, window_size: int):
             of length `signal_length`
     """
     assert window_size <= signal_length
+    return WindowSampler(window_size, signal_length)
 
-    def sampling_operation(signal: np.ndarray) -> np.ndarray:
-        assert len(signal) == signal_length
-        # Sample an index where window starting at that number can fit
-        index = np.random.randint(0, signal_length - window_size + 1)
-        return signal[index:index + window_size]
 
-    return sampling_operation
+class WindowSegmenter:
+    def __init__(self, window_starts: List[int], window_size: int, signal_length: int):
+        self.window_starts = window_starts
+        self.window_size = window_size
+        self.signal_length = signal_length
+
+    def __call__(self, signal: np.ndarray):
+        assert len(signal) == self.signal_length
+        return np.stack([
+            signal[index:index+self.window_size] for index in self.window_starts
+        ])
 
 
 def window_segmenting_test_transform(signal_length: int, window_size: int):
@@ -62,13 +80,7 @@ def window_segmenting_test_transform(signal_length: int, window_size: int):
         else:
             break
 
-    def segmenting_operation(signal):
-        assert len(signal) == signal_length
-        return np.stack([
-            signal[index:index+window_size] for index in window_starts
-        ])
-
-    return segmenting_operation
+    return WindowSegmenter(window_starts, window_size, signal_length)
 
 
 def binarize_labels(

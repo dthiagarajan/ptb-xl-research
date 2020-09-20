@@ -35,6 +35,16 @@ class TTACallback(BaseModelCallback):
         return model_output
 
 
+class LossComposition:
+    def __init__(self, loss_component_functions):
+        self.loss_component_functions = loss_component_functions
+
+    def __call__(self, y_pred, y_true):
+        return sum([
+            fac * slcf(y_pred, y_true) for fac, slcf in self.loss_component_functions
+        ])
+
+
 class LossCallback(BaseModelCallback):
     """Wraps a model to call an activation and loss function on the model output."""
 
@@ -66,15 +76,25 @@ class LossCallback(BaseModelCallback):
                         f'Loss function term must be one of {cls.allowed_loss_function_components}'
                     subloss_func = loss_functions.loss_function_factory(factor, **kwargs)
 
-            def loss_component_function(y_pred, y_true):
-                return float_factor * subloss_func(y_pred, y_true)
+            loss_component_functions.append((float_factor, subloss_func))
 
-            loss_component_functions.append(loss_component_function)
+        return LossComposition(loss_component_functions)
 
-        def combined_loss_function(y_pred, y_true):
-            return sum([lcf(y_pred, y_true) for lcf in loss_component_functions])
 
-        return combined_loss_function
+def acc(y_pred, y_true):
+    return ((y_pred > 0.5) == y_true).sum().float() / (len(y_true) * len(y_true[0]))
+
+
+def auc(y_pred, y_true):
+    return torch.Tensor([AUC(y_true.cpu().numpy(), y_pred.detach().cpu().numpy())])
+
+
+def probs_identity(y_pred, y_true):
+    return y_pred
+
+
+def targets_identity(y_pred, y_true):
+    return y_true
 
 
 class MetricOutputCallback(BaseModelCallback):
@@ -98,17 +118,11 @@ class MetricOutputCallback(BaseModelCallback):
 
     @classmethod
     def initialize_metric_functions(cls):
-        def acc(y_pred, y_true):
-            return ((y_pred > 0.5) == y_true).sum().float() / (len(y_true) * len(y_true[0]))
-
-        def auc(y_pred, y_true):
-            return torch.Tensor([AUC(y_true.cpu().numpy(), y_pred.detach().cpu().numpy())])
-
         return {
             'acc': acc,
             'auc': auc,
-            'probs': lambda probs, targets: probs,
-            'targets': lambda probs, targets: targets
+            'probs': probs_identity,
+            'targets': targets_identity
         }
 
 
