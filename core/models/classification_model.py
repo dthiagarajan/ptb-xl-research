@@ -1,6 +1,9 @@
 import argparse
 import numpy as np
+import os
 import pandas as pd
+from pathlib import Path
+import pickle
 from pytorch_lightning.core.lightning import LightningModule
 import torch
 
@@ -307,9 +310,24 @@ class PTBXLClassificationModel(LightningModule):
             }
         }
 
+    def checkpoint_object(self, obj, filename):
+        version_cnt = 0
+        filedir = Path('./lightning_logs', f'version_{version_cnt}')
+        while Path('./lightning_logs', f'version_{version_cnt}').is_dir():
+            filedir = Path('./lightning_logs', f'version_{version_cnt}')
+            version_cnt += 1
+        filepath = os.path.join(filedir, f'{filename}.pkl')
+        print(f'Dumping object to {filepath}...')
+        Path(filepath).touch()
+        with open(filepath, 'wb') as f:
+            pickle.dump(obj, f)
+        print(f'...done.')
+        print(f"To load, run the following in Python: pickle.load(open('{filepath}', 'rb'))")
+
     def visualize_best_and_worst_heatmaps(self, test_probs, test_targets):
         label_mapping = {k: i for i, k in enumerate(self.labels)}
         test_diffs = np.abs(test_probs - test_targets)
+        indices_for_inspection = {}
         for label_name, label_index in label_mapping.items():
             test_label_targets = test_targets[:, label_index]
 
@@ -332,10 +350,18 @@ class PTBXLClassificationModel(LightningModule):
             # Best negatives, worst negatives
             negative_mask = test_label_targets == 0
             test_label_diffs[~negative_mask] = 1.1
-            best_indices = test_label_diffs.argsort()[:3]
+            all_best_indices = test_label_diffs.argsort()
+            best_indices = all_best_indices[:3]
             test_label_diffs[~negative_mask] = -0.1
             test_label_diffs *= -1
-            worst_indices = test_label_diffs.argsort()[:3]
+            all_worst_indices = test_label_diffs.argsort()
+            worst_indices = all_worst_indices[:3]
+
+            indices_for_inspection[str(label_name)] = {
+                'best': all_best_indices,
+                'worst': all_worst_indices
+            }
+
             best_test_negative_datapoints = [
                 self.trainer.datamodule.val_dataset[i] for i in best_indices
             ]
@@ -387,6 +413,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'{label_name} Absent/Worst (Rank {i})': fig
                 for i, fig in enumerate(worst_test_negative_figs)
             })
+        self.checkpoint_object(indices_for_inspection, 'best_and_worst_datapoints')
 
     def get_param_lr_maps(self, lrs):
         """ Output parameter LR mappings for setting up an optimizer for `model`."""
