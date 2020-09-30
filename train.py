@@ -108,6 +108,12 @@ if __name__ == '__main__':
     trainer.fit(model, data_module)
     if args.checkpoint_models:
         print(f'Best model path: {checkpoint_callback.best_model_path}.')
+        print(f'Loading model from checkpiont...')
+        model.load_from_checkpoint(
+            checkpoint_callback.best_model_path,
+            args.model_name,
+        )
+        print(f'...done.')
 
     model.labels = data_module.labels  # Needed for confusion matrix labels
     trainer.test(model=model, datamodule=data_module)
