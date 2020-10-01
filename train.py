@@ -22,7 +22,8 @@ from core.models import PTBXLClassificationModel
 
 
 def get_args():
-    """Argument parser running the SimCLR model.
+    """Argument parser for training a PTB-XL classification model.
+
     Returns:
         argparse.Namespace: namespace with all specified arguments
     """

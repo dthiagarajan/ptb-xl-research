@@ -46,6 +46,8 @@ class PTBXLClassificationModel(LightningModule):
         self.sampling_rate = kwargs['sampling_rate']
         self.profile = kwargs['profiler']
         self.heatmap_layers = kwargs['heatmap_layers']
+        if 'model_checkpoint' in kwargs:
+            self.model_checkpoint = kwargs['model_checkpoint']
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
@@ -290,16 +292,21 @@ class PTBXLClassificationModel(LightningModule):
         return output_metrics
 
     def test_epoch_end(self, outputs):
+        if hasattr(self, 'model_checkpoint'):
+            print(f'Symlinking model checkpoint to this runs version directory...')
+            filedir = self.get_version_directory()
+            filepath = Path(filedir, 'checkpoints', self.model_checkpoint.split('/')[-1])
+            os.symlink(self.model_checkpoint, filepath)
+            print(f'...done. Symlinked to {filepath}.')
+
         test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
         test_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
         if self.show_heatmaps:
-            print(f'Logging heatmaps - this might take some time...')
             with torch.set_grad_enabled(True):
                 self.visualize_best_and_worst_heatmaps(probs.numpy(), targets.numpy())
-            print(f'...done logging heatmaps.')
         f_max = metric_summary(targets.numpy(), probs.numpy())[0]
         self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
