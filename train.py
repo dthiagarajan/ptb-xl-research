@@ -59,7 +59,7 @@ if __name__ == '__main__':
         except ValueError:
             print('Archive file does not exist, creating in this run.')
             lr_find_config = pd.DataFrame()
-        if model.model.model.__class__.__name__ not in lr_find_config.index:
+        if args.model_name not in lr_find_config.index:
             # Need to prepare dataloaders for LR find
             data_module.prepare_data()
             print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
@@ -72,11 +72,11 @@ if __name__ == '__main__':
             suggested_lr = lr_finder.suggestion()
             print(f'Found best LR of {suggested_lr:0.5f}.')
             for key, item in vars(args).items():
-                lr_find_config.loc[model.model.model.__class__.__name__, key] = item
-            lr_find_config.loc[model.model.model.__class__.__name__, 'lr'] = suggested_lr
+                lr_find_config.loc[args.model_name, key] = item
+            lr_find_config.loc[args.model_name, 'lr'] = suggested_lr
             lr_find_config.to_json('./lr_find_archive.json', orient='index')
         else:
-            suggested_lr = float(lr_find_config.loc[model.model.model.__class__.__name__, 'lr'])
+            suggested_lr = float(lr_find_config.loc[args.model_name, 'lr'])
             print(f'Reading LR {suggested_lr} from archive config.')
         model.lr = suggested_lr
         # Need to manually update, similar to doc.

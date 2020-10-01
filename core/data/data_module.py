@@ -52,7 +52,7 @@ class PTBXLDataModule(pl.LightningDataModule):
             self.labels = np.load(label_names_path, allow_pickle=True)
 
         else:
-            X, Y = load_all_data('', self.sampling_rate)
+            X, Y = load_all_data(self.data_dir, self.sampling_rate)
             X_train, y_train, X_test, y_test = split_all_data(X, Y)
             valid_x_train, valid_y_train, mlb = binarize_labels(
                 X_train, y_train, self.task_name

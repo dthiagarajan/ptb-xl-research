@@ -136,7 +136,7 @@ class PTBXLClassificationModel(LightningModule):
             average_precisions,
             average_recalls,
             thresholds
-        ) = metric_summary(targets.numpy(), probs.numpy())
+        ) = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())
 
         self.logger.log_metrics(
             {
@@ -218,7 +218,7 @@ class PTBXLClassificationModel(LightningModule):
             average_precisions,
             average_recalls,
             thresholds
-        ) = metric_summary(targets.numpy(), probs.numpy())
+        ) = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())
 
         self.logger.log_metrics(
             {
@@ -302,12 +302,12 @@ class PTBXLClassificationModel(LightningModule):
         test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
         test_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
-        probs = torch.cat([x['probs'] for x in outputs])
-        targets = torch.cat([x['targets'] for x in outputs])
+        probs = torch.cat([x['probs'] for x in outputs]).cpu()
+        targets = torch.cat([x['targets'] for x in outputs]).cpu()
         if self.show_heatmaps:
             with torch.set_grad_enabled(True):
                 self.visualize_best_and_worst_heatmaps(probs.numpy(), targets.numpy())
-        f_max = metric_summary(targets.numpy(), probs.numpy())[0]
+        f_max = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())[0]
         self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
         return {
