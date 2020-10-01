@@ -99,7 +99,7 @@ def compute_and_show_heatmap(
     output_fp: Optional[str] = None,
     show_fig: bool = True,
     verbose: bool = False
-) -> Figure:
+) -> Optional[Figure]:
     """Computes and visualizes a heatmap using `model` for a given `datapoint`.
 
     Args:
@@ -119,7 +119,8 @@ def compute_and_show_heatmap(
 
 
     Returns:
-        Figure: figure with all leads visualized with overlayed heatmap
+        Optional[Figure]: figure with all leads visualized with overlayed heatmap. If gradients
+            vanished, returns None, as heatmap would be blank.
     """
     assert hasattr(model, submodule_name), f'Model does not have submodule {submodule_name}.'
     signal, label = datapoint
@@ -167,7 +168,6 @@ def compute_and_show_heatmap(
                 f"{'Present' if label[label_index] > 0 else 'Absent'}"
                 f" for {class_of_concern} presence."
             )
-
         probs[label_index].backward()
 
         gradients = grad_dict[submodule_name]
@@ -177,14 +177,20 @@ def compute_and_show_heatmap(
         activation_grid = torch.mean(activation_grid, dim=1).squeeze()
         activation_grid = np.maximum(activation_grid.detach().cpu(), 0)
         activation_grid /= torch.max(activation_grid)
-        signal = signal.numpy()
-        resized_heatmap = activation_grid.numpy()
-        resized_heatmap = cv2.resize(resized_heatmap, (signal.shape[-1], signal.shape[0]))
-        fig = show_signal_heatmap(
-            flatten_signal(signal), flatten_heatmap(resized_heatmap), class_of_concern,
-            label_prob, 'Present' if label[label_index] > 0 else 'Absent',
-            figsize=figsize, output_fp=output_fp, show_fig=show_fig
-        )
+
+        if torch.isnan(activation_grid).any().item():
+            if verbose:
+                print(f'Gradients vanished due to very strong prediction, returning None.')
+            fig = None
+        else:
+            signal = signal.numpy()
+            resized_heatmap = activation_grid.numpy()
+            resized_heatmap = cv2.resize(resized_heatmap, (signal.shape[-1], signal.shape[0]))
+            fig = show_signal_heatmap(
+                flatten_signal(signal), flatten_heatmap(resized_heatmap), class_of_concern,
+                label_prob, 'Present' if label[label_index] > 0 else 'Absent',
+                figsize=figsize, output_fp=output_fp, show_fig=show_fig
+            )
 
     finally:
         activation_grad_handle.remove()

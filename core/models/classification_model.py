@@ -6,6 +6,7 @@ from pathlib import Path
 import pickle
 from pytorch_lightning.core.lightning import LightningModule
 import torch
+from tqdm import tqdm
 
 from core.analysis.visualization import compute_and_show_heatmap
 from core.callbacks.model_callbacks import callback_factory
@@ -310,12 +311,16 @@ class PTBXLClassificationModel(LightningModule):
             }
         }
 
-    def checkpoint_object(self, obj, filename):
+    def get_version_directory(self):
         version_cnt = 0
         filedir = Path('./lightning_logs', f'version_{version_cnt}')
         while Path('./lightning_logs', f'version_{version_cnt}').is_dir():
             filedir = Path('./lightning_logs', f'version_{version_cnt}')
             version_cnt += 1
+        return filedir
+
+    def checkpoint_object(self, obj, filename):
+        filedir = self.get_version_directory()
         filepath = os.path.join(filedir, f'{filename}.pkl')
         print(f'Dumping object to {filepath}...')
         Path(filepath).touch()
@@ -323,6 +328,43 @@ class PTBXLClassificationModel(LightningModule):
             pickle.dump(obj, f)
         print(f'...done.')
         print(f"To load, run the following in Python: pickle.load(open('{filepath}', 'rb'))")
+
+    def checkpoint_fig(self, fig, subdir, filename, verbose=False):
+        filedir = self.get_version_directory()
+        filepath = Path(filedir, subdir)
+        if verbose:
+            print(f'Dumping figure to {filepath}...')
+        filepath.mkdir(parents=True, exist_ok=True)
+        fig.savefig(Path(filepath, filename))
+        if verbose:
+            print(f'...done.')
+
+    def get_and_save_heatmap_figures(
+        self,
+        datapoints,
+        label_mapping,
+        label_name,
+        datapoint_identifier,
+        model_layer='pool3'
+    ):
+        figures_plotted = 0
+        subdir = '_'.join(datapoint_identifier.lower().split('/'))
+        for i, datapoint in enumerate(tqdm(
+            datapoints,
+            desc=f'{str(label_name)} {datapoint_identifier} heatmap generation'
+        )):
+            fig = compute_and_show_heatmap(
+                self.model.model, model_layer,
+                datapoint, label_mapping, class_of_concern=label_name,
+                show_fig=False, figsize=(10, 40)
+            )
+            if figures_plotted <= 5 and fig is not None:
+                self.logger.plot_figures({f'{label_name} {datapoint_identifier} (Rank {i})': fig})
+                figures_plotted += 1
+            if fig is not None:
+                self.checkpoint_fig(
+                    fig, Path('heatmaps', label_name, subdir), f'{str(i)}.jpg', verbose=False
+                )
 
     def visualize_best_and_worst_heatmaps(self, test_probs, test_targets):
         label_mapping = {k: i for i, k in enumerate(self.labels)}
@@ -335,10 +377,12 @@ class PTBXLClassificationModel(LightningModule):
             # Best positives, worst positives
             positive_mask = test_label_targets == 1
             test_label_diffs[~positive_mask] = 1.1
-            best_indices = test_label_diffs.argsort()[:3]
+            all_best_present_indices = test_label_diffs.argsort()
+            best_indices = all_best_present_indices[:50]
             test_label_diffs[~positive_mask] = -0.1
             test_label_diffs *= -1
-            worst_indices = test_label_diffs.argsort()[:3]
+            all_worst_present_indices = test_label_diffs.argsort()
+            worst_indices = all_worst_present_indices[:50]
             best_test_positive_datapoints = [
                 self.trainer.datamodule.val_dataset[i] for i in best_indices
             ]
@@ -350,16 +394,18 @@ class PTBXLClassificationModel(LightningModule):
             # Best negatives, worst negatives
             negative_mask = test_label_targets == 0
             test_label_diffs[~negative_mask] = 1.1
-            all_best_indices = test_label_diffs.argsort()
-            best_indices = all_best_indices[:3]
+            all_best_absent_indices = test_label_diffs.argsort()
+            best_indices = all_best_absent_indices[:50]
             test_label_diffs[~negative_mask] = -0.1
             test_label_diffs *= -1
-            all_worst_indices = test_label_diffs.argsort()
-            worst_indices = all_worst_indices[:3]
+            all_worst_absent_indices = test_label_diffs.argsort()
+            worst_indices = all_worst_absent_indices[:50]
 
             indices_for_inspection[str(label_name)] = {
-                'best': all_best_indices,
-                'worst': all_worst_indices
+                'best_present': all_best_present_indices,
+                'worst_present': all_worst_present_indices,
+                'best_absent': all_best_absent_indices,
+                'worst_absent': all_worst_absent_indices
             }
 
             best_test_negative_datapoints = [
@@ -369,50 +415,19 @@ class PTBXLClassificationModel(LightningModule):
                 self.trainer.datamodule.val_dataset[i] for i in worst_indices
             ]
 
-            best_test_positive_figs = [
-                compute_and_show_heatmap(
-                    self.model.model, 'pool3',
-                    datapoint, label_mapping, class_of_concern=label_name,
-                    show_fig=False, figsize=(10, 40)
-                ) for datapoint in best_test_positive_datapoints
-            ]
-            self.logger.plot_figures({
-                f'{label_name} Present/Best (Rank {i})': fig
-                for i, fig in enumerate(best_test_positive_figs)
-            })
-            worst_test_positive_figs = [
-                compute_and_show_heatmap(
-                    self.model.model, 'pool3',
-                    datapoint, label_mapping, class_of_concern=label_name,
-                    show_fig=False, figsize=(10, 40)
-                ) for datapoint in worst_test_positive_datapoints
-            ]
-            self.logger.plot_figures({
-                f'{label_name} Present/Worst (Rank {i})': fig
-                for i, fig in enumerate(worst_test_positive_figs)
-            })
-            best_test_negative_figs = [
-                compute_and_show_heatmap(
-                    self.model.model, 'pool3',
-                    datapoint, label_mapping, class_of_concern=label_name,
-                    show_fig=False, figsize=(10, 40)
-                ) for datapoint in best_test_negative_datapoints
-            ]
-            self.logger.plot_figures({
-                f'{label_name} Absent/Best (Rank {i})': fig
-                for i, fig in enumerate(best_test_negative_figs)
-            })
-            worst_test_negative_figs = [
-                compute_and_show_heatmap(
-                    self.model.model, 'pool3',
-                    datapoint, label_mapping, class_of_concern=label_name,
-                    show_fig=False, figsize=(10, 40)
-                ) for datapoint in worst_test_negative_datapoints
-            ]
-            self.logger.plot_figures({
-                f'{label_name} Absent/Worst (Rank {i})': fig
-                for i, fig in enumerate(worst_test_negative_figs)
-            })
+            self.get_and_save_heatmap_figures(
+                best_test_positive_datapoints, label_mapping, label_name, 'Present/Best'
+            )
+            self.get_and_save_heatmap_figures(
+                worst_test_positive_datapoints, label_mapping, label_name, 'Present/Worst'
+            )
+            self.get_and_save_heatmap_figures(
+                best_test_negative_datapoints, label_mapping, label_name, 'Absent/Best'
+            )
+            self.get_and_save_heatmap_figures(
+                worst_test_negative_datapoints, label_mapping, label_name, 'Absent/Worst'
+            )
+
         self.checkpoint_object(indices_for_inspection, 'best_and_worst_datapoints')
 
     def get_param_lr_maps(self, lrs):
