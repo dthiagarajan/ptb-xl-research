@@ -32,6 +32,7 @@ def show_signal_heatmap(
     class_name: str,
     prob: float,
     target: str,
+    layer_name: str = 'pool3',
     figsize: Tuple[int, int] = (25, 100),
     output_fp: str = None,
     show_fig: bool = True
@@ -44,6 +45,7 @@ def show_signal_heatmap(
         class_name (str): name of the class for the associated heatmap output
         prob (float): probability of the class prediction being present in the signal
         target (str): the ground truth for the given signal (one of Present or Absent)
+        layer_name (str): name of the layer that produced this heatmap. Defaults to 'pool3'.
         figsize (Tuple[int, int]): size of the figure for output
         output_fp (str, optional): if provided, saves figure to file, otherwise shows inline.
             Defaults to None.
@@ -76,7 +78,8 @@ def show_signal_heatmap(
         ax.set_ylim(fs.min(), fs.max())
     plt.tight_layout()
     fig.suptitle(
-        f'GradCAM for {class_name} classification (predicted {prob:.3f}; actual: {target})',
+        f'GradCAM ({layer_name}) for {class_name} classification '
+        f'(predicted {prob:.3f}; actual: {target})',
         fontsize=20
     )
     fig.tight_layout()
@@ -189,7 +192,7 @@ def compute_and_show_heatmap(
             fig = show_signal_heatmap(
                 flatten_signal(signal), flatten_heatmap(resized_heatmap), class_of_concern,
                 label_prob, 'Present' if label[label_index] > 0 else 'Absent',
-                figsize=figsize, output_fp=output_fp, show_fig=show_fig
+                layer_name=submodule_name, figsize=figsize, output_fp=output_fp, show_fig=show_fig
             )
 
     finally:

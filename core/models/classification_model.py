@@ -45,6 +45,7 @@ class PTBXLClassificationModel(LightningModule):
         self.model = self.initialize_model(model_name, **kwargs)
         self.sampling_rate = kwargs['sampling_rate']
         self.profile = kwargs['profiler']
+        self.heatmap_layers = kwargs['heatmap_layers']
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
@@ -351,7 +352,7 @@ class PTBXLClassificationModel(LightningModule):
         subdir = '_'.join(datapoint_identifier.lower().split('/'))
         for i, datapoint in enumerate(tqdm(
             datapoints,
-            desc=f'{str(label_name)} {datapoint_identifier} heatmap generation'
+            desc=f'{model_layer} {str(label_name)} {datapoint_identifier} heatmap generation'
         )):
             fig = compute_and_show_heatmap(
                 self.model.model, model_layer,
@@ -363,7 +364,9 @@ class PTBXLClassificationModel(LightningModule):
                 figures_plotted += 1
             if fig is not None:
                 self.checkpoint_fig(
-                    fig, Path('heatmaps', label_name, subdir), f'{str(i)}.jpg', verbose=False
+                    fig,
+                    Path('heatmaps', label_name, model_layer, subdir),
+                    f'{str(i)}.jpg'
                 )
 
     def visualize_best_and_worst_heatmaps(self, test_probs, test_targets):
@@ -414,19 +417,35 @@ class PTBXLClassificationModel(LightningModule):
             worst_test_negative_datapoints = [
                 self.trainer.datamodule.val_dataset[i] for i in worst_indices
             ]
-
-            self.get_and_save_heatmap_figures(
-                best_test_positive_datapoints, label_mapping, label_name, 'Present/Best'
-            )
-            self.get_and_save_heatmap_figures(
-                worst_test_positive_datapoints, label_mapping, label_name, 'Present/Worst'
-            )
-            self.get_and_save_heatmap_figures(
-                best_test_negative_datapoints, label_mapping, label_name, 'Absent/Best'
-            )
-            self.get_and_save_heatmap_figures(
-                worst_test_negative_datapoints, label_mapping, label_name, 'Absent/Worst'
-            )
+            for layer in self.heatmap_layers:
+                self.get_and_save_heatmap_figures(
+                    best_test_positive_datapoints,
+                    label_mapping,
+                    label_name,
+                    'Present/Best',
+                    model_layer=layer
+                )
+                self.get_and_save_heatmap_figures(
+                    worst_test_positive_datapoints,
+                    label_mapping,
+                    label_name,
+                    'Present/Worst',
+                    model_layer=layer
+                )
+                self.get_and_save_heatmap_figures(
+                    best_test_negative_datapoints,
+                    label_mapping,
+                    label_name,
+                    'Absent/Best',
+                    model_layer=layer
+                )
+                self.get_and_save_heatmap_figures(
+                    worst_test_negative_datapoints,
+                    label_mapping,
+                    label_name,
+                    'Absent/Worst',
+                    model_layer=layer
+                )
 
         self.checkpoint_object(indices_for_inspection, 'best_and_worst_datapoints')
 
@@ -485,4 +504,5 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--mixup', type=bool, default=False)
         parser.add_argument('--mixup_layer', type=int, default=0)
         parser.add_argument('--mixup_alpha', type=float, default=0.4)
+        parser.add_argument('--heatmap_layers', nargs='+', type=str, default=['pool3'])
         return parser
