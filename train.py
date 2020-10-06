@@ -50,10 +50,7 @@ if __name__ == '__main__':
     )
 
     if args.find_lr:
-        assert (  # noqa: F631
-            args.distributed_backend is None,
-            'LR find does not work properly with distributed backends'
-        )
+        assert args.distributed_backend is None, 'LR find will not work properly distributed'
         try:
             lr_find_config = pd.read_json('./lr_find_archive.json', orient='index')
         except ValueError:
