@@ -154,7 +154,9 @@ class MultiMetricModelCheckpoint(ModelCheckpoint):
         return functools.reduce(
             np.logical_and,
             [
-                monitor_op[mode](current[k], self.best_k_models[self.kth_best_model_path][k])
+                monitor_op[mode](
+                    current[k].cpu(), self.best_k_models[self.kth_best_model_path][k].cpu()
+                )
                 for k, mode in zip(self.monitors, self.modes)
             ]
         )

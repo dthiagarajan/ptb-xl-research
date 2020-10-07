@@ -30,7 +30,7 @@ class TTACallback(BaseModelCallback):
 
     def on_forward_end(self, module, batch, batch_idx, model_output=None):
         if self.tta_applied:
-            model_output = model_output.view(module.bs, module.tta_n, -1).mean(1)
+            model_output = model_output.view(module.bs, module.tta_n, -1).max(1)[0]
             self.tta_applied = False
         return model_output
 

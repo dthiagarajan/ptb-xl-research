@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
+from typing import Optional
 
 from core.data.dataset import ECGDataset
 from core.data.transforms import (
@@ -25,7 +26,7 @@ class PTBXLDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
 
-    def prepare_data(self):
+    def setup(self, stage: Optional[str] = None):
         train_data_path = Path(
             self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'train_data.npy'
         )
@@ -73,12 +74,12 @@ class PTBXLDataModule(pl.LightningDataModule):
 
         # Conv1d expects shape (N, C_in, L_in), so we set signal length as the last dimension
         train_transform = transforms.Compose([
-            window_sampling_transform(self.sampling_rate * 10, self.sampling_rate * 2),
+            window_sampling_transform(self.sampling_rate * 10, int(self.sampling_rate * 2.5)),
             np.transpose,  # Setting signal length as the last dimension
             torch.from_numpy
         ])
         test_transform = transforms.Compose([
-            window_segmenting_test_transform(self.sampling_rate * 10, self.sampling_rate * 2),
+            window_segmenting_test_transform(self.sampling_rate * 10, int(self.sampling_rate * 2.5)),
             partial(np.transpose, axes=(0, 2, 1)),  # Setting signal length as the last dimension
             torch.from_numpy
         ])

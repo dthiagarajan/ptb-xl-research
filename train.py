@@ -11,9 +11,11 @@ python train.py --model_name Simple1DCNN --fast_dev_run True \
     --loss_function '2*focal_loss + f1_loss'
 """
 import argparse
+import os
 import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
+import torch
 
 from core.callbacks import MultiMetricModelCheckpoint
 from core.data import PTBXLDataModule
@@ -58,7 +60,7 @@ if __name__ == '__main__':
             lr_find_config = pd.DataFrame()
         if args.model_name not in lr_find_config.index:
             # Need to prepare dataloaders for LR find
-            data_module.prepare_data()
+            data_module.setup()
             print(f'Finding LR - note that specified LR ({args.lr}) is being overriden.')
             trainer = Trainer()
             # This will take longer than a single epoch would take, but worth it for a more
@@ -96,7 +98,7 @@ if __name__ == '__main__':
         verbose=True,
         monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
         modes=['min', 'max', 'max']
-    ) if args.checkpoint_models else None
+    ) if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0 else None
 
     # Resetting trainer due to some issue with threading otherwise
     trainer = Trainer.from_argparse_args(
@@ -106,11 +108,8 @@ if __name__ == '__main__':
     trainer.fit(model, data_module)
     if args.checkpoint_models:
         print(f'Best model path: {checkpoint_callback.best_model_path}.')
-        print(f'Loading model from checkpiont...')
-        model.load_from_checkpoint(
-            checkpoint_callback.best_model_path,
-            args.model_name,
-        )
+        print(f'Loading model from checkpoint...')
+        model.load_from_checkpoint(checkpoint_callback.best_model_path)
         print(f'...done.')
 
     model.labels = data_module.labels  # Needed for confusion matrix labels

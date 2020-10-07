@@ -5,6 +5,7 @@ import pandas as pd
 from pathlib import Path
 import pickle
 from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning.utilities import rank_zero_only
 import torch
 from tqdm import tqdm
 
@@ -48,6 +49,7 @@ class PTBXLClassificationModel(LightningModule):
         self.heatmap_layers = kwargs['heatmap_layers']
         if 'model_checkpoint' in kwargs:
             self.model_checkpoint = kwargs['model_checkpoint']
+        kwargs['model_name'] = model_name
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
@@ -294,7 +296,7 @@ class PTBXLClassificationModel(LightningModule):
     def test_epoch_end(self, outputs):
         if hasattr(self, 'model_checkpoint'):
             print(f'Symlinking model checkpoint to this runs version directory...')
-            filedir = self.get_version_directory()
+            filedir = self.version_directory
             filepath = Path(filedir, 'checkpoints', self.model_checkpoint.split('/')[-1])
             os.symlink(self.model_checkpoint, filepath)
             print(f'...done. Symlinked to {filepath}.')
@@ -319,16 +321,19 @@ class PTBXLClassificationModel(LightningModule):
             }
         }
 
-    def get_version_directory(self):
-        version_cnt = 0
-        filedir = Path('./lightning_logs', f'version_{version_cnt}')
-        while Path('./lightning_logs', f'version_{version_cnt}').is_dir():
+    @property
+    def version_directory(self):
+        if not hasattr(self, '_version_directory'):
+            version_cnt = 0
             filedir = Path('./lightning_logs', f'version_{version_cnt}')
-            version_cnt += 1
-        return filedir
+            while Path('./lightning_logs', f'version_{version_cnt}').is_dir():
+                filedir = Path('./lightning_logs', f'version_{version_cnt}')
+                version_cnt += 1
+            self._version_directory = filedir
+        return self._version_directory
 
     def checkpoint_object(self, obj, filename):
-        filedir = self.get_version_directory()
+        filedir = self.version_directory
         filepath = os.path.join(filedir, f'{filename}.pkl')
         print(f'Dumping object to {filepath}...')
         Path(filepath).touch()
@@ -338,7 +343,7 @@ class PTBXLClassificationModel(LightningModule):
         print(f"To load, run the following in Python: pickle.load(open('{filepath}', 'rb'))")
 
     def checkpoint_fig(self, fig, subdir, filename, verbose=False):
-        filedir = self.get_version_directory()
+        filedir = self.version_directory
         filepath = Path(filedir, subdir)
         if verbose:
             print(f'Dumping figure to {filepath}...')

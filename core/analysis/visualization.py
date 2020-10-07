@@ -157,6 +157,8 @@ def compute_and_show_heatmap(
     try:
         model.eval()
         model.zero_grad()
+        if torch.cuda.is_available():
+            signal = signal.cuda()
         output = model(signal)
         probs = torch.sigmoid(output).mean(axis=0).cpu()
         label_prob = probs[label_index].item()
@@ -186,7 +188,7 @@ def compute_and_show_heatmap(
                 print(f'Gradients vanished due to very strong prediction, returning None.')
             fig = None
         else:
-            signal = signal.numpy()
+            signal = signal.cpu().numpy()
             resized_heatmap = activation_grid.numpy()
             resized_heatmap = cv2.resize(resized_heatmap, (signal.shape[-1], signal.shape[0]))
             fig = show_signal_heatmap(
