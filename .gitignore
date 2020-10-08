@@ -4,5 +4,6 @@ __pycache__/
 *.npy
 *.json
 *.ipynb
+completed_runs/*
 lightning_logs/*
 wandb/*
