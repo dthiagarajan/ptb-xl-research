@@ -86,6 +86,7 @@ if __name__ == '__main__':
         logger = WandbLogger(project="ptb-xl")
     elif args.logger_platform == 'tensorboard':
         logger = TensorBoardLogger('./lightning_logs', name='')
+        model.log_dir = './lightning_logs'
 
     early_stopping_callback = EarlyStopping(
         verbose=True,

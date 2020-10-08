@@ -294,12 +294,18 @@ class PTBXLClassificationModel(LightningModule):
         return output_metrics
 
     def test_epoch_end(self, outputs):
-        if hasattr(self, 'model_checkpoint'):
+        if hasattr(self, 'model_checkpoint') and int(os.environ.get('LOCAL_RANK', 0)) == 0:
             print(f'Symlinking model checkpoint to this runs version directory...')
             filedir = self.version_directory
             filepath = Path(filedir, 'checkpoints', self.model_checkpoint.split('/')[-1])
-            os.symlink(self.model_checkpoint, filepath)
-            print(f'...done. Symlinked to {filepath}.')
+            os.symlink(Path(self.model_checkpoint).resolve(), filepath)
+            hparams_path = Path(Path(self.model_checkpoint).parent.parent.resolve(), 'hparams.yaml')
+            symlinked_hparams_path = Path(filedir, 'hparams.yaml')
+            os.symlink(hparams_path, symlinked_hparams_path)
+            print(
+                f'...done. Symlinked to {self.model_checkpoint} to {filepath} and '
+                f'{hparams_path} to {symlinked_hparams_path}.'
+            )
 
         test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
@@ -325,9 +331,9 @@ class PTBXLClassificationModel(LightningModule):
     def version_directory(self):
         if not hasattr(self, '_version_directory'):
             version_cnt = 0
-            filedir = Path('./lightning_logs', f'version_{version_cnt}')
-            while Path('./lightning_logs', f'version_{version_cnt}').is_dir():
-                filedir = Path('./lightning_logs', f'version_{version_cnt}')
+            filedir = Path(self.log_dir, f'version_{version_cnt}')
+            while Path(self.log_dir, f'version_{version_cnt}').is_dir():
+                filedir = Path(self.log_dir, f'version_{version_cnt}')
                 version_cnt += 1
             self._version_directory = filedir
         return self._version_directory
@@ -437,27 +443,27 @@ class PTBXLClassificationModel(LightningModule):
                     'Present/Best',
                     model_layer=layer
                 )
-                self.get_and_save_heatmap_figures(
-                    worst_test_positive_datapoints,
-                    label_mapping,
-                    label_name,
-                    'Present/Worst',
-                    model_layer=layer
-                )
-                self.get_and_save_heatmap_figures(
-                    best_test_negative_datapoints,
-                    label_mapping,
-                    label_name,
-                    'Absent/Best',
-                    model_layer=layer
-                )
-                self.get_and_save_heatmap_figures(
-                    worst_test_negative_datapoints,
-                    label_mapping,
-                    label_name,
-                    'Absent/Worst',
-                    model_layer=layer
-                )
+                # self.get_and_save_heatmap_figures(
+                #     worst_test_positive_datapoints,
+                #     label_mapping,
+                #     label_name,
+                #     'Present/Worst',
+                #     model_layer=layer
+                # )
+                # self.get_and_save_heatmap_figures(
+                #     best_test_negative_datapoints,
+                #     label_mapping,
+                #     label_name,
+                #     'Absent/Best',
+                #     model_layer=layer
+                # )
+                # self.get_and_save_heatmap_figures(
+                #     worst_test_negative_datapoints,
+                #     label_mapping,
+                #     label_name,
+                #     'Absent/Worst',
+                #     model_layer=layer
+                # )
 
         self.checkpoint_object(indices_for_inspection, 'best_and_worst_datapoints')
 

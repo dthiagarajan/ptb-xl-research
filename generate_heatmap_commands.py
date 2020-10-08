@@ -22,7 +22,7 @@ for checkpoint, hparam in zip(checkpoints, hparams):
     updated_checkpoint = Path(checkpoint.parent, 'checkpoints', str(checkpoint).split('/')[-1])
     updated_checkpoint = str(updated_checkpoint).replace('completed_runs', 'lightning_logs')
     commands.append(
-        f'python show_heatmaps.py --distributed_backend ddp --gpus 4 --model_checkpoint {updated_checkpoint} --model_name {model_name} --heatmap_layers {heatmap_layers}'
+        f'python show_heatmaps.py --gpus 1 --model_checkpoint {updated_checkpoint} --model_name {model_name} --heatmap_layers {heatmap_layers}'
     )
     commands.append(
         "nvidia-smi | grep 'python3' | awk '{ print $5 }' | xargs -n1 kill -9"

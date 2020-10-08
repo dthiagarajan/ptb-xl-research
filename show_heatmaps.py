@@ -35,25 +35,27 @@ def get_args():
 
 if __name__ == '__main__':
     args = get_args()
-    args.show_heatmaps = True
     seed_everything(31)
-    model = PTBXLClassificationModel(**vars(args))
+
+    print(f'Loading model from checkpoint...')
+    model = PTBXLClassificationModel.load_from_checkpoint(args.model_checkpoint)
+    model.model_checkpoint = args.model_checkpoint
+    model.show_heatmaps = True
+    print(f'...done.')
+
     data_module = PTBXLDataModule(
         args.data_dir, args.sampling_rate, args.task_name,
         batch_size=args.batch_size, num_workers=args.num_workers
     )
-    data_module.prepare_data()
+    data_module.setup()
 
     if args.logger_platform == 'wandb':
         logger = WandbLogger(project="ptb-xl")
     elif args.logger_platform == 'tensorboard':
-        logger = TensorBoardLogger('./lightning_logs', name='')
+        logger = TensorBoardLogger('./heatmap_logs', name='')
+        model.log_dir = './heatmap_logs'
 
     trainer = Trainer.from_argparse_args(args, deterministic=True, logger=logger)
-
-    print(f'Loading model from checkpoint...')
-    model.load_from_checkpoint(args.model_checkpoint, args.model_name)
-    print(f'...done.')
 
     model.labels = data_module.labels  # Needed for confusion matrix labels
     trainer.test(model=model, datamodule=data_module)
