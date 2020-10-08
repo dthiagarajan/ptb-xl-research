@@ -19,6 +19,9 @@ for checkpoint, hparam in zip(checkpoints, hparams):
     commands.append(
         f'python show_heatmaps.py --distributed_backend ddp --gpus 4 --model_checkpoint {checkpoint} --model_name {model_name} --heatmap_layers {heatmap_layers}'
     )
+    commands.append(
+        "nvidia-smi | grep 'python3' | awk '{ print $5 }' | xargs -n1 kill -9"
+    )
 
 with open('./generate_heatmaps.sh', 'w') as f:
-    f.write('\n'.join(commands))
+    f.write(" &&\n".join(commands))
