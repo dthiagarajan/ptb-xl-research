@@ -6,5 +6,7 @@ __pycache__/
 *.ipynb
 completed_runs/*
 heatmap_logs/*
+heatmap_logs.zip
 lightning_logs/*
 wandb/*
+NOTES.txt
