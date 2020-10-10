@@ -36,13 +36,10 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     seed_everything(31)
-
     print(f'Loading model from checkpoint...')
     model = PTBXLClassificationModel.load_from_checkpoint(args.model_checkpoint)
-    model.model_checkpoint = args.model_checkpoint
     model.show_heatmaps = True
     print(f'...done.')
-
     data_module = PTBXLDataModule(
         args.data_dir, args.sampling_rate, args.task_name,
         batch_size=args.batch_size, num_workers=args.num_workers

@@ -7,25 +7,17 @@ checkpoints = sorted(
 )
 hparams = [Path(p.parent, 'hparams.yaml') for p in checkpoints]
 
-heatmap_layers = {
-    'Simple1DCNN': 'pool1 pool2 pool3',
-
-}
-
 commands = []
 for checkpoint, hparam in zip(checkpoints, hparams):
     assert checkpoint.exists() and hparam.exists()
     with open(hparam, 'r') as stream:
         hparam_dict = yaml.safe_load(stream)
     model_name = hparam_dict['model_name']
-    heatmap_layers = 'pool1 pool2 pool3' if model_name == 'Simple1DCNN' else 'layer2 layer3 layer4'
+    heatmap_layers = 'pool1 pool2 pool3' if model_name == 'Simple1DCNN' else 'layer1 layer2 layer3'
     updated_checkpoint = Path(checkpoint.parent, 'checkpoints', str(checkpoint).split('/')[-1])
     updated_checkpoint = str(updated_checkpoint).replace('completed_runs', 'lightning_logs')
     commands.append(
         f'python show_heatmaps.py --gpus 1 --model_checkpoint {updated_checkpoint} --model_name {model_name} --heatmap_layers {heatmap_layers}'
-    )
-    commands.append(
-        "nvidia-smi | grep 'python3' | awk '{ print $5 }' | xargs -n1 kill -9"
     )
 
 with open('./generate_heatmaps.sh', 'w') as f:
