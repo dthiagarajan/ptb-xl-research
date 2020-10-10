@@ -10,7 +10,7 @@ class TensorBoardLogger(TensorBoardLogger):
         self.experiment.add_scalars(main_tag, tag_scalar_dict, global_step, walltime)
 
     def log_hyperparams(self, *args, **kwargs):
-        if not self.testing:
+        if not hasattr(self, 'testing') or not self.testing:
             super(TensorBoardLogger, self).log_hyperparams(*args, **kwargs)
         else:
             print("Not logging to Tensorboard in test phase.")

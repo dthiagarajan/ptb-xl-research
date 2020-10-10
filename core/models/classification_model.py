@@ -306,7 +306,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'...done. Symlinked to {self.model_checkpoint} to {filepath} and '
                 f'{hparams_path} to {symlinked_hparams_path}.'
             )
-
+        self.test_outputs = outputs
         test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
         test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
         test_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
@@ -523,4 +523,5 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--mixup_layer', type=int, default=0)
         parser.add_argument('--mixup_alpha', type=float, default=0.4)
         parser.add_argument('--heatmap_layers', nargs='+', type=str, default=['pool3'])
+        parser.add_argument('--show_heatmaps', type=bool, default=False)
         return parser
