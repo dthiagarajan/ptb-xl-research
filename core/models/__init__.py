@@ -12,5 +12,13 @@ from .resnet import (  # noqa: F401
     wide_resnet18_2,
     wide_resnet34_2,
     wide_resnet50_2,
-    wide_resnet101_2
+    wide_resnet101_2,
+    wide_resnet18_4,
+    wide_resnet34_4,
+    wide_resnet50_4,
+    wide_resnet101_4,
+    wide_resnet18_8,
+    wide_resnet34_8,
+    wide_resnet50_8,
+    wide_resnet101_8
 )
