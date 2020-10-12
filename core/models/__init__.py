@@ -9,6 +9,8 @@ from .resnet import (  # noqa: F401
     resnet152,
     resnext50_32x4d,
     resnext101_32x8d,
+    wide_resnet18_2,
+    wide_resnet34_2,
     wide_resnet50_2,
     wide_resnet101_2
 )

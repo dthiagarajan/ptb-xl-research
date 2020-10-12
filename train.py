@@ -15,7 +15,6 @@ import os
 import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
-import torch
 
 from core.callbacks import MultiMetricModelCheckpoint
 from core.data import PTBXLDataModule

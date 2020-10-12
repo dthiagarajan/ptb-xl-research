@@ -5,7 +5,6 @@ import pandas as pd
 from pathlib import Path
 import pickle
 from pytorch_lightning.core.lightning import LightningModule
-from pytorch_lightning.utilities import rank_zero_only
 import torch
 from tqdm import tqdm
 
@@ -23,7 +22,7 @@ class PTBXLClassificationModel(LightningModule):
         'Simple1DCNN',
         'resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet152',
         'resnext50_32x4d', 'resnext101_32x8d',
-        'wide_resnet50_2', 'wide_resnet101_2'
+        'wide_resnet18_2', 'wide_resnet34_2', 'wide_resnet50_2', 'wide_resnet101_2'
     ]
 
     def __init__(self, model_name, *args, **kwargs):
