@@ -44,6 +44,7 @@ if __name__ == '__main__':
     args = get_args()
     seed_everything(31)
     model = PTBXLClassificationModel(**vars(args))
+    model.suppress_logging = False
     data_module = PTBXLDataModule(
         args.data_dir, args.sampling_rate, args.task_name,
         batch_size=args.batch_size, num_workers=args.num_workers

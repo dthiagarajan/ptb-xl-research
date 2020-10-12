@@ -38,6 +38,8 @@ if __name__ == '__main__':
     seed_everything(31)
     print(f'Loading model from checkpoint...')
     model = PTBXLClassificationModel.load_from_checkpoint(args.model_checkpoint)
+    model.heatmap_layers = args.heatmap_layers
+    model.model_checkpoint = args.model_checkpoint
     model.show_heatmaps = True
     print(f'...done.')
     data_module = PTBXLDataModule(
@@ -50,6 +52,7 @@ if __name__ == '__main__':
         logger = WandbLogger(project="ptb-xl")
     elif args.logger_platform == 'tensorboard':
         logger = TensorBoardLogger('./heatmap_logs', name='')
+        model.suppress_logging = True
         model.log_dir = './heatmap_logs'
 
     trainer = Trainer.from_argparse_args(args, deterministic=True, logger=logger)

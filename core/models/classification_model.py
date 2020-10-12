@@ -296,13 +296,13 @@ class PTBXLClassificationModel(LightningModule):
         if hasattr(self, 'model_checkpoint') and int(os.environ.get('LOCAL_RANK', 0)) == 0:
             print(f'Symlinking model checkpoint to this runs version directory...')
             filedir = self.version_directory
-            filepath = Path(filedir, 'checkpoints', self.model_checkpoint.split('/')[-1])
-            os.symlink(Path(self.model_checkpoint).resolve(), filepath)
+            symlinked_model_path = Path(filedir, 'checkpoints', self.model_checkpoint.split('/')[-1])
+            os.symlink(Path(self.model_checkpoint).resolve(), symlinked_model_path)
             hparams_path = Path(Path(self.model_checkpoint).parent.parent.resolve(), 'hparams.yaml')
             symlinked_hparams_path = Path(filedir, 'hparams.yaml')
             os.symlink(hparams_path, symlinked_hparams_path)
             print(
-                f'...done. Symlinked to {self.model_checkpoint} to {filepath} and '
+                f'...done. Symlinked to {self.model_checkpoint} to {symlinked_model_path} and '
                 f'{hparams_path} to {symlinked_hparams_path}.'
             )
         self.test_outputs = outputs
@@ -314,6 +314,13 @@ class PTBXLClassificationModel(LightningModule):
         if self.show_heatmaps:
             with torch.set_grad_enabled(True):
                 self.visualize_best_and_worst_heatmaps(probs.numpy(), targets.numpy())
+            if hasattr(self, 'model_checkpoint') and int(os.environ.get('LOCAL_RANK', 0)) == 0:
+                print(f'Deleting model checkpoint and symlink to save memory...')
+                symlinked_model_path.unlink()
+                os.remove(self.model_checkpoint)
+                print(
+                    f'...done. Removed link at {symlinked_model_path}, deleted {self.model_checkpoint}.'
+                )
         f_max = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())[0]
         self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
@@ -363,28 +370,42 @@ class PTBXLClassificationModel(LightningModule):
         label_mapping,
         label_name,
         datapoint_identifier,
-        model_layer='pool3'
+        model_layer='pool3',
+        index_subset=None
     ):
         figures_plotted = 0
         subdir = '_'.join(datapoint_identifier.lower().split('/'))
+        indices = []
+        _datapoints = datapoints
+        if index_subset is not None:
+            _datapoints = [datapoints[i] for i in index_subset]
         for i, datapoint in enumerate(tqdm(
-            datapoints,
+            _datapoints,
             desc=f'{model_layer} {str(label_name)} {datapoint_identifier} heatmap generation'
         )):
+            if figures_plotted > 5:
+                break
             fig = compute_and_show_heatmap(
                 self.model.model, model_layer,
                 datapoint, label_mapping, class_of_concern=label_name,
                 show_fig=False, figsize=(10, 40)
             )
             if figures_plotted <= 5 and fig is not None:
-                self.logger.plot_figures({f'{label_name} {datapoint_identifier} (Rank {i})': fig})
+                indices.append(i)
+                if not self.suppress_logging:
+                    self.logger.plot_figures({
+                        f'{label_name} {datapoint_identifier} (Rank {i})': fig
+                    })
                 figures_plotted += 1
-            if fig is not None:
+                index = i
+                if index_subset is not None:
+                    index = index_subset[i]
                 self.checkpoint_fig(
                     fig,
                     Path('heatmaps', label_name, model_layer, subdir),
-                    f'{str(i)}.jpg'
+                    f'{str(index)}.jpg'
                 )
+        return indices
 
     def visualize_best_and_worst_heatmaps(self, test_probs, test_targets):
         label_mapping = {k: i for i, k in enumerate(self.labels)}
@@ -434,14 +455,26 @@ class PTBXLClassificationModel(LightningModule):
             worst_test_negative_datapoints = [
                 self.trainer.datamodule.val_dataset[i] for i in worst_indices
             ]
-            for layer in self.heatmap_layers:
-                self.get_and_save_heatmap_figures(
-                    best_test_positive_datapoints,
-                    label_mapping,
-                    label_name,
-                    'Present/Best',
-                    model_layer=layer
-                )
+            # Assume that heatmap layers are given in sorted order, i.e. from beginning to end
+            datapoint_indices = None
+            for i, layer in enumerate(self.heatmap_layers[::-1]):
+                if i == 0:
+                    datapoint_indices = self.get_and_save_heatmap_figures(
+                        best_test_positive_datapoints,
+                        label_mapping,
+                        label_name,
+                        'Present/Best',
+                        model_layer=layer
+                    )
+                else:
+                    self.get_and_save_heatmap_figures(
+                        best_test_positive_datapoints,
+                        label_mapping,
+                        label_name,
+                        'Present/Best',
+                        model_layer=layer,
+                        index_subset=datapoint_indices
+                    )
                 # self.get_and_save_heatmap_figures(
                 #     worst_test_positive_datapoints,
                 #     label_mapping,
