@@ -6,7 +6,12 @@ from torch.nn import functional as F
 
 def loss_function_factory(function_name, **kwargs):
     if function_name == 'bce_loss':
-        return bce_loss
+        return partial(
+            bce_loss,
+            label_weight_mapping=(
+                kwargs['label_weight_mapping'] if kwargs['class_weighted_loss'] is True else None
+            )
+        )
     elif function_name == 'f1_loss':
         return f1_loss
     elif function_name == 'focal_loss':
@@ -15,10 +20,22 @@ def loss_function_factory(function_name, **kwargs):
         )
 
 
-def bce_loss(y_pred: torch.tensor, y_true: torch.tensor, reduce: bool = True) -> torch.tensor:
-    return F.binary_cross_entropy(
-        y_pred.float(), y_true.float(), reduction='mean' if reduce else 'none'
-    )
+def bce_loss(
+    y_pred: torch.tensor,
+    y_true: torch.tensor,
+    reduce: bool = True,
+    label_weight_mapping: dict = None
+) -> torch.tensor:
+    weight = None
+    if label_weight_mapping is not None:
+        weight = torch.tensor([
+            [label_weight_mapping[col][int(t[col].item())] for col in range(len(t))]
+            for t in y_true
+        ])
+    loss = F.binary_cross_entropy(y_pred.float(), y_true.float(), weight=weight)
+    if reduce:
+        loss = loss.mean()
+    return loss
 
 
 def f1_loss(

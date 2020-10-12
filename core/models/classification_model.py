@@ -45,6 +45,8 @@ class PTBXLClassificationModel(LightningModule):
         self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
         self.max_epochs = kwargs['max_epochs']
         self.model = self.initialize_model(model_name, **kwargs)
+        kwargs['label_counts_mapping'] = str(kwargs['label_counts_mapping'])
+        kwargs['label_weight_mapping'] = str(kwargs['label_weight_mapping'])
         self.sampling_rate = kwargs['sampling_rate']
         self.profile = kwargs['profiler']
         self.heatmap_layers = kwargs['heatmap_layers']
@@ -550,6 +552,7 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--num_classes', type=int, default=5)
         parser.add_argument('--lr', nargs='+', type=float, default=[1e-3])
         parser.add_argument('--loss_function', type=str, default='bce_loss')
+        parser.add_argument('--class_weighted_loss', type=bool, default=False)
         parser.add_argument('--focal_loss_alpha', type=float, default=1.0)
         parser.add_argument('--focal_loss_gamma', type=float, default=2.0)
         parser.add_argument('--use_one_cycle_lr_scheduler', type=bool, default=False)

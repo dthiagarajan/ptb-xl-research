@@ -43,12 +43,16 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
     seed_everything(31)
-    model = PTBXLClassificationModel(**vars(args))
-    model.suppress_logging = False
+
     data_module = PTBXLDataModule(
         args.data_dir, args.sampling_rate, args.task_name,
         batch_size=args.batch_size, num_workers=args.num_workers
     )
+
+    args.label_counts_mapping = data_module.label_counts_mapping
+    args.label_weight_mapping = data_module.label_weight_mapping
+    model = PTBXLClassificationModel(**vars(args))
+    model.suppress_logging = False
 
     if args.find_lr:
         assert args.distributed_backend is None, 'LR find will not work properly distributed'

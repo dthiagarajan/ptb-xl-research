@@ -2,6 +2,7 @@ import argparse
 from functools import partial
 import numpy as np
 from pathlib import Path
+import pickle
 import pytorch_lightning as pl
 import torch
 from torch.utils.data import DataLoader
@@ -25,6 +26,11 @@ class PTBXLDataModule(pl.LightningDataModule):
         self.task_name = task_name
         self.batch_size = batch_size
         self.num_workers = num_workers
+
+        try:
+            self.get_label_weight_mapping()
+        except AttributeError:
+            self.setup()
 
     def setup(self, stage: Optional[str] = None):
         train_data_path = Path(
@@ -85,6 +91,39 @@ class PTBXLDataModule(pl.LightningDataModule):
         ])
         self.train_dataset = ECGDataset(valid_x_train, valid_y_train, transform=train_transform)
         self.val_dataset = ECGDataset(valid_x_test, valid_y_test, transform=test_transform)
+
+        self.get_label_weight_mapping()
+
+    def get_label_weight_mapping(self):
+        class_counts_fp = Path(
+            self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'class_counts.pkl'
+        )
+        class_weights_fp = Path(
+            self.data_dir, 'data', str(self.sampling_rate), self.task_name, 'class_weights.pkl'
+        )
+        if class_counts_fp.exists() and class_weights_fp.exists():
+            with open(class_counts_fp, 'rb') as f:
+                self.label_counts_mapping = pickle.load(f)
+            with open(class_weights_fp, 'rb') as f:
+                self.label_weight_mapping = pickle.load(f)
+        else:
+            train_labels = np.stack([it[1] for it in self.train_dataset])
+            self.label_counts_mapping = {
+                col: np.unique(train_labels[:, col], return_counts=True)[1]
+                for col in range(train_labels.shape[1])
+            }
+            label_weight_mapping = {
+                col: (self.label_counts_mapping[col].sum() / self.label_counts_mapping[col])
+                for col in range(train_labels.shape[1])
+            }
+            self.label_weight_mapping = {
+                col: label_weight_mapping[col] / label_weight_mapping[col].sum()
+                for col in range(train_labels.shape[1])
+            }
+            with open(class_counts_fp, 'wb') as f:
+                pickle.dump(self.label_counts_mapping, f)
+            with open(class_weights_fp, 'wb') as f:
+                pickle.dump(self.label_weight_mapping, f)
 
     def train_dataloader(self):
         return DataLoader(
