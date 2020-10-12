@@ -5,6 +5,7 @@ __pycache__/
 *.json
 *.ipynb
 completed_runs/*
+ensemble_logs/*
 heatmap_logs/*
 heatmap_logs.zip
 lightning_logs/*
