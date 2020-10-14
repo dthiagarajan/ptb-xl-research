@@ -1,6 +1,7 @@
 .DS_Store
 .vim/
 __pycache__/
+*.pkl
 *.npy
 *.json
 *.ipynb
