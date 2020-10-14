@@ -40,28 +40,50 @@ def save_df(df, output_fp):
 
 def load_raw_data(df, sampling_rate, path):
     if sampling_rate == 100:
-        data = [wfdb.rdsamp(path + f) for f in tqdm(df.filename_lr, desc='wfdb.rdsamp')]
+        data = [wfdb.rdsamp(str(Path(path, f))) for f in tqdm(df.filename_lr, desc='wfdb.rdsamp')]
     else:
-        data = [wfdb.rdsamp(path + f) for f in tqdm(df.filename_hr, desc='wfdb.rdsamp')]
+        data = [wfdb.rdsamp(str(Path(path, f))) for f in tqdm(df.filename_hr, desc='wfdb.rdsamp')]
     data = np.array([signal for signal, meta in tqdm(data, desc='np.array conversion')])
     return data
 
 
-def aggregate_diagnostic(record_scp_codes, scp_codes_df=None):
+def aggregate_diagnostic(record_scp_codes, task_name='diagnostic_superclass', scp_codes_df=None):
     if scp_codes_df is None:
         raise NotImplementedError(
             'This function must be called after wrapping with functools.partial'
         )
-    return set([
-        scp_codes_df.loc[key].diagnostic_class for key in record_scp_codes.keys()
-        if key in scp_codes_df.index
-    ])
+    if task_name == 'diagnostic_superclass':
+        return set([
+            scp_codes_df.loc[key].diagnostic_class for key in record_scp_codes.keys()
+            if key in scp_codes_df.index
+        ])
+    elif task_name == 'diagnostic_subclass':
+        return set([
+            scp_codes_df.loc[key].diagnostic_subclass for key in record_scp_codes.keys()
+            if key in scp_codes_df.index
+        ])
+    elif task_name == 'form':
+        return set([
+            scp_codes_df.loc[key].form for key in record_scp_codes.keys()
+            if key in scp_codes_df.index
+        ])
+    elif task_name == 'rhythm':
+        return set([
+            scp_codes_df.loc[key].rhythm for key in record_scp_codes.keys()
+            if key in scp_codes_df.index
+        ])
 
 
-def load_all_data(path_to_ptbxl, sampling_rate, checkpoint_path='.', save=False):
+def load_all_data(
+    path_to_ptbxl,
+    sampling_rate,
+    task_name='diagnostic_superclass',
+    checkpoint_path='.',
+    save=False
+):
     if (
         Path(f'{checkpoint_path}/all_data_{sampling_rate}.npy').exists() and
-        Path(f'{checkpoint_path}/all_labels.json').exists()
+        Path(f'{checkpoint_path}/all_{task_name}_labels.json').exists()
     ):
         print('Data and labels already exist, loading...')
         X, Y = (
@@ -74,28 +96,33 @@ def load_all_data(path_to_ptbxl, sampling_rate, checkpoint_path='.', save=False)
 
         X = load_raw_data(Y, sampling_rate, path_to_ptbxl)
 
-        # Load scp_statements.csv for diagnostic aggregation
+        # Load scp_statements.csv for diagnostic/form/rhythm aggregation
         scp_codes_df = load_csv(os.path.join(path_to_ptbxl, 'scp_statements.csv'), index_col=0)
-        scp_codes_df = scp_codes_df[scp_codes_df.diagnostic == 1]
+        if 'diagnostic' in task_name:
+            scp_codes_df = scp_codes_df[scp_codes_df.diagnostic == 1]
+        elif task_name == 'form':
+            scp_codes_df = scp_codes_df[scp_codes_df.form == 1]
+        elif task_name == 'rhythm':
+            scp_codes_df = scp_codes_df[scp_codes_df.rhythm == 1]
 
         # Apply diagnostic superclass
-        Y['diagnostic_superclass'] = Y.scp_codes.apply(
-            partial(aggregate_diagnostic, scp_codes_df=scp_codes_df)
+        Y[task_name] = Y.scp_codes.apply(
+            partial(aggregate_diagnostic, task_name=task_name, scp_codes_df=scp_codes_df)
         )
 
         if save:
             print('Saving data to JSON...')
-            save_numpy_array(X, f'./all_data_{sampling_rate}.npy')
+            save_numpy_array(X, f'{checkpoint_path}/all_data_{sampling_rate}.npy')
             print('Saving labels to JSON...')
-            save_df(Y, './all_labels.json')
+            save_df(Y, f'{checkpoint_path}/all_{task_name}_labels.json')
     return X, Y
 
 
-def split_all_data(X, Y, test_fold=10):
+def split_all_data(X, Y, task_name='diagnostic_superclass', test_fold=10):
     # Train
     X_train = X[np.where(Y.strat_fold != test_fold)]
-    y_train = Y[(Y.strat_fold != test_fold)].diagnostic_superclass
+    y_train = Y[(Y.strat_fold != test_fold)][task_name]
     # Test
     X_test = X[np.where(Y.strat_fold == test_fold)]
-    y_test = Y[Y.strat_fold == test_fold].diagnostic_superclass
+    y_test = Y[Y.strat_fold == test_fold][task_name]
     return X_train, y_train, X_test, y_test

@@ -43,6 +43,9 @@ class PTBXLClassificationModel(LightningModule):
         if len(self.lr) == 1:
             self.lr = self.lr[0]
         self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
+        self.lr_decay = kwargs['lr_decay']
+        self.lr_decay_period = kwargs['lr_decay_period']
+        self.lr_decay_gamma = kwargs['lr_decay_gamma']
         self.max_epochs = kwargs['max_epochs']
         self.model = self.initialize_model(model_name, **kwargs)
         kwargs['label_counts_mapping'] = str(kwargs['label_counts_mapping'])
@@ -134,6 +137,7 @@ class PTBXLClassificationModel(LightningModule):
         auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
+        print(probs.shape, int(os.environ.get('LOCAL_RANK', 0)))
         (
             f_max,
             _,
@@ -538,6 +542,15 @@ class PTBXLClassificationModel(LightningModule):
                     )
                 ]
             )
+        elif self.lr_decay:
+            return (
+                [optimizer],
+                [
+                    torch.optim.lr_scheduler.StepLR(
+                        optimizer, step_size=self.lr_decay_period, gamma=self.lr_decay_gamma
+                    )
+                ]
+            )
         else:
             return optimizer
 
@@ -556,6 +569,9 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--focal_loss_alpha', type=float, default=1.0)
         parser.add_argument('--focal_loss_gamma', type=float, default=2.0)
         parser.add_argument('--use_one_cycle_lr_scheduler', type=bool, default=False)
+        parser.add_argument('--lr_decay', type=bool, default=False)
+        parser.add_argument('--lr_decay_period', type=int, default=5)
+        parser.add_argument('--lr_decay_gamma', type=float, default=0.1)
         parser.add_argument('--mixup', type=bool, default=False)
         parser.add_argument('--mixup_layer', type=int, default=0)
         parser.add_argument('--mixup_alpha', type=float, default=0.4)

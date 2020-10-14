@@ -67,11 +67,7 @@ def metric_summary(
         y_true, y_pred, thresholds
     )
     f_scores = 2 * (average_precisions * average_recalls) / (average_precisions + average_recalls)
-    try:
-        auc = roc_auc_score(y_true, y_pred, average='macro')
-    except ValueError:
-        print(f'Value error encountered, likely due to using mixup. Setting AUC to 0.')
-        auc = 0.
+    auc = AUC(y_true, y_pred, verbose=True)
     return (
         f_scores[np.nanargmax(f_scores)],
         auc,
@@ -82,7 +78,7 @@ def metric_summary(
     )
 
 
-def AUC(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+def AUC(y_true: np.ndarray, y_pred: np.ndarray, verbose=False) -> float:
     """Computes the macro-average AUC score.
 
     Args:
@@ -92,4 +88,16 @@ def AUC(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     Returns:
         float: macro-average AUC score.
     """
-    return roc_auc_score(y_true, y_pred, average='macro')
+    aucs = []
+    for col in range(y_true.shape[1]):
+        try:
+            aucs.append(roc_auc_score(y_true[:, col], y_pred[:, col]))
+        except ValueError as e:
+            if verbose:
+                print(
+                    f'Value error encountered for label {col}, likely due to using mixup or '
+                    f'lack of full label presence. Setting AUC to accuracy. '
+                    f'Original error was: {str(e)}.'
+                )
+            aucs.append((y_pred == y_true).sum() / len(y_pred))
+    return np.array(aucs).mean()
