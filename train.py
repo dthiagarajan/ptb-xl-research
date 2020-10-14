@@ -15,6 +15,8 @@ import os
 import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
+from pytorch_lightning.utilities.distributed import find_free_network_port
+import torch.distributed as dist
 
 from core.callbacks import MultiMetricModelCheckpoint
 from core.data import PTBXLDataModule
@@ -32,7 +34,7 @@ def get_args():
         'Train a classification model on PTB-XL diagnostic superclass'
     )
     parser.add_argument('--checkpoint_models', type=bool, default=False)
-    parser.add_argument('--early_stopping', type=bool, default=True)
+    parser.add_argument('--early_stopping', type=bool, default=False)
     parser.add_argument('--find_lr', type=bool, default=False)
     parser = PTBXLClassificationModel.add_model_specific_args(parser)
     parser = PTBXLDataModule.add_data_specific_args(parser)
@@ -110,11 +112,6 @@ if __name__ == '__main__':
         deterministic=True, logger=logger
     )
     trainer.fit(model, data_module)
-    if args.checkpoint_models:
-        print(f'Best model path: {checkpoint_callback.best_model_path}.')
-        print(f'Loading model from checkpoint...')
-        model.load_from_checkpoint(checkpoint_callback.best_model_path)
-        print(f'...done.')
 
-    model.labels = data_module.labels  # Needed for confusion matrix labels
-    trainer.test(model=model, datamodule=data_module)
+    if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0:
+        print(f'Best model path: {checkpoint_callback.best_model_path}.')
