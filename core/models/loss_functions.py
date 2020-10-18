@@ -32,6 +32,8 @@ def bce_loss(
             [label_weight_mapping[col][int(t[col].item())] for col in range(len(t))]
             for t in y_true
         ])
+        if torch.cuda.is_available():
+            weight = weight.cuda()
     loss = F.binary_cross_entropy(y_pred.float(), y_true.float(), weight=weight)
     if reduce:
         loss = loss.mean()

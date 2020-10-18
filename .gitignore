@@ -1,6 +1,7 @@
 .DS_Store
 .vim/
 __pycache__/
+*.pkl
 *.npy
 *.json
 *.ipynb
@@ -9,5 +10,6 @@ ensemble_logs/*
 heatmap_logs/*
 heatmap_logs.zip
 lightning_logs/*
+testing_logs/*
 wandb/*
 NOTES.txt

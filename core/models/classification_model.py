@@ -6,10 +6,12 @@ from pathlib import Path
 import pickle
 from pytorch_lightning.core.lightning import LightningModule
 import torch
+import torch.distributed as dist
 from tqdm import tqdm
 
 from core.analysis.visualization import compute_and_show_heatmap
 from core.callbacks.model_callbacks import callback_factory
+from core.distributed.ops import all_gather_op
 from core.metrics import metric_summary
 import core.models as ptbxl_models
 from core.models import CallbackModel
@@ -131,12 +133,32 @@ class PTBXLClassificationModel(LightningModule):
         output_metrics['progress_bar'] = tensorboard_logs
         return output_metrics
 
-    def training_epoch_end(self, outputs):
-        loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
-        auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
+    def all_gather_outputs(self, outputs):
+        losses = torch.stack([x['loss'] for x in outputs])
+        accs = torch.stack([x['acc'] for x in outputs])
+        aucs = torch.stack([x['auc'] for x in outputs])
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
+
+        if 'CPU' in self.trainer.accelerator_backend.__class__.__name__:
+            return (
+                losses.mean(),
+                accs.mean(),
+                aucs.mean(),
+                probs,
+                targets
+            )
+
+        return (
+            all_gather_op(losses).mean(),
+            all_gather_op(accs).mean(),
+            all_gather_op(aucs).mean(),
+            all_gather_op(probs),
+            all_gather_op(targets)
+        )
+
+    def training_epoch_end(self, outputs):
+        loss_mean, acc_mean, auc_mean, probs, targets = self.all_gather_outputs(outputs)
         (
             f_max,
             _,
@@ -214,11 +236,7 @@ class PTBXLClassificationModel(LightningModule):
         return output_metrics
 
     def validation_epoch_end(self, outputs):
-        val_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        val_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
-        val_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
-        probs = torch.cat([x['probs'] for x in outputs])
-        targets = torch.cat([x['targets'] for x in outputs])
+        val_loss_mean, val_acc_mean, val_auc_mean, probs, targets = self.all_gather_outputs(outputs)
         (
             f_max,
             _,
@@ -312,12 +330,16 @@ class PTBXLClassificationModel(LightningModule):
                 f'...done. Symlinked to {self.model_checkpoint} to {symlinked_model_path} and '
                 f'{hparams_path} to {symlinked_hparams_path}.'
             )
-        self.test_outputs = outputs
-        test_loss_mean = torch.stack([x['loss'] for x in outputs]).mean()
-        test_acc_mean = torch.stack([x['acc'] for x in outputs]).mean()
-        test_auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
-        probs = torch.cat([x['probs'] for x in outputs]).cpu()
-        targets = torch.cat([x['targets'] for x in outputs]).cpu()
+        test_loss_mean, test_acc_mean, test_auc_mean, probs, targets = self.all_gather_outputs(outputs)
+        self.test_outputs = {
+            'loss': test_loss_mean,
+            'acc': test_acc_mean,
+            'auc': test_auc_mean,
+            'probs': probs,
+            'targets': targets
+        }
+        if not hasattr(self, 'labels'):
+            self.labels = self.trainer.datamodule.labels  # Needed for confusion matrix labels
         if self.show_heatmaps:
             with torch.set_grad_enabled(True):
                 self.visualize_best_and_worst_heatmaps(probs.numpy(), targets.numpy())
@@ -329,7 +351,7 @@ class PTBXLClassificationModel(LightningModule):
                     f'...done. Removed link at {symlinked_model_path}, deleted {self.model_checkpoint}.'
                 )
         f_max = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())[0]
-        self.logger.plot_confusion_matrix(targets, (probs > 0.5).cpu().numpy(), self.labels)
+        self.logger.plot_confusion_matrix(targets.cpu().numpy(), (probs > 0.5).cpu().numpy(), self.labels)
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
         return {
             'log': {
