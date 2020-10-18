@@ -137,7 +137,6 @@ class PTBXLClassificationModel(LightningModule):
         auc_mean = torch.stack([x['auc'] for x in outputs]).mean()
         probs = torch.cat([x['probs'] for x in outputs])
         targets = torch.cat([x['targets'] for x in outputs])
-        print(probs.shape, int(os.environ.get('LOCAL_RANK', 0)))
         (
             f_max,
             _,
@@ -514,7 +513,7 @@ class PTBXLClassificationModel(LightningModule):
         incr_size = len(body_parameters) // (len(lrs) - 1)
         for i in range(0, len(body_parameters), incr_size):
             submodel_lrs = np.geomspace(
-                lrs[i // incr_size], lrs[(i // incr_size) + 1],
+                lrs[i // incr_size], lrs[min((i // incr_size) + 1, len(lrs) - 1)],
                 len(body_parameters[i:i + incr_size])
             )
             param_lr_mappings.extend([
@@ -537,7 +536,7 @@ class PTBXLClassificationModel(LightningModule):
                 [
                     torch.optim.lr_scheduler.OneCycleLR(
                         optimizer, self.lr, epochs=self.max_epochs,
-                        steps_per_epoch=int(np.ceil(len(self.train_dataset) / self.batch_size)),
+                        steps_per_epoch=int(np.ceil(len(self.trainer.datamodule.train_dataset) / self.batch_size)),
                         div_factor=1e2
                     )
                 ]
