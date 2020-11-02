@@ -8,8 +8,8 @@ from core.metrics import (
 
 
 def test_auc():
-    y_true = np.array([0, 0, 1, 1])
-    y_scores = np.array([0.1, 0.4, 0.35, 0.8])
+    y_true = np.array([0, 0, 1, 1])[..., None]
+    y_scores = np.array([0.1, 0.4, 0.35, 0.8])[..., None]
     assert AUC(y_true, y_scores) == 0.75
 
 

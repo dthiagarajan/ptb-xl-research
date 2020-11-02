@@ -89,6 +89,7 @@ def AUC(y_true: np.ndarray, y_pred: np.ndarray, verbose=False) -> float:
         float: macro-average AUC score.
     """
     aucs = []
+    assert len(y_true.shape) == 2 and len(y_pred.shape) == 2, 'Predictions and labels must be 2D.'
     for col in range(y_true.shape[1]):
         try:
             aucs.append(roc_auc_score(y_true[:, col], y_pred[:, col]))
