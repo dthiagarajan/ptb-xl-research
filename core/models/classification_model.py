@@ -54,11 +54,11 @@ class PTBXLClassificationModel(LightningModule):
         self.maybe_set(kwargs, 'label_counts_mapping', mod=str)
         self.maybe_set(kwargs, 'label_weight_mapping', mod=str)
         self.maybe_set(kwargs, 'sampling_rate')
-        self.maybe_set(kwargs, 'profile')
+        self.maybe_set(kwargs, 'profiler')
         self.maybe_set(kwargs, 'heatmap_layers')
         self.maybe_set(kwargs, 'model_checkpoint')
         self.maybe_set(kwargs, 'model_name')
-        self.save_hyperparameters(*kwargs.keys())
+        self.save_hyperparameters(*[k for k in kwargs.keys() if 'mapping' not in k])
 
         self.train_step, self.val_step = 0, 0
         self.best_metrics = None
@@ -212,7 +212,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'Train Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
             })
         self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
-        if self.profile and len(self.model.timings) > 0:
+        if self.profiler and len(self.model.timings) > 0:
             hook_reports = []
             for hook_name in self.model.timings:
                 for callback_name, times in self.model.timings[hook_name].items():
@@ -290,7 +290,7 @@ class PTBXLClassificationModel(LightningModule):
                 'val_epoch_f_max': torch.tensor(f_max)
             }
         )
-        if self.profile and len(self.model.timings) > 0:
+        if self.profiler and len(self.model.timings) > 0:
             hook_reports = []
             for hook_name in self.model.timings:
                 for callback_name, times in self.model.timings[hook_name].items():
