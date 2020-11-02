@@ -9,7 +9,9 @@ def loss_function_factory(function_name, **kwargs):
         return partial(
             bce_loss,
             label_weight_mapping=(
-                kwargs['label_weight_mapping'] if kwargs['class_weighted_loss'] is True else None
+                kwargs['label_weight_mapping']
+                if 'class_weighted_loss' in kwargs and kwargs['class_weighted_loss'] is True
+                else None
             )
         )
     elif function_name == 'f1_loss':

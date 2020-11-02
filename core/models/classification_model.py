@@ -6,7 +6,7 @@ from pathlib import Path
 import pickle
 from pytorch_lightning.core.lightning import LightningModule
 import torch
-import torch.distributed as dist
+import torch.distributed as dist  # noqa: F401
 from tqdm import tqdm
 
 from core.analysis.visualization import compute_and_show_heatmap
@@ -33,35 +33,39 @@ class PTBXLClassificationModel(LightningModule):
         super(PTBXLClassificationModel, self).__init__()
         assert model_name in self.allowed_models, f"Please pick one of: {self.allowed_models}"
         self.model_name = model_name
-        self.task_name = kwargs['task_name']
-        self.logger_platform = kwargs['logger_platform']
-        self.show_heatmaps = kwargs['show_heatmaps']
-        self.data_dir = kwargs['data_dir']
-        self.batch_size = kwargs['batch_size']
-        self.num_input_channels = kwargs['num_input_channels']
-        self.num_classes = kwargs['num_classes']
-        self.num_workers = kwargs['num_workers']
-        self.lr = sorted(kwargs['lr'])
+        self.maybe_set(kwargs, 'task_name')
+        self.maybe_set(kwargs, 'logger_platform')
+        self.maybe_set(kwargs, 'show_heatmaps')
+        self.maybe_set(kwargs, 'data_dir')
+        self.maybe_set(kwargs, 'batch_size')
+        self.maybe_set(kwargs, 'num_input_channels')
+        self.maybe_set(kwargs, 'num_classes')
+        self.maybe_set(kwargs, 'num_workers')
+        self.maybe_set(kwargs, 'lr', mod=sorted)
         if len(self.lr) == 1:
             self.lr = self.lr[0]
-        self.use_one_cycle_lr_scheduler = kwargs['use_one_cycle_lr_scheduler']
-        self.lr_decay = kwargs['lr_decay']
-        self.lr_decay_period = kwargs['lr_decay_period']
-        self.lr_decay_gamma = kwargs['lr_decay_gamma']
-        self.max_epochs = kwargs['max_epochs']
+        self.maybe_set(kwargs, 'use_one_cycle_lr_scheduler')
+        self.maybe_set(kwargs, 'lr_decay')
+        self.maybe_set(kwargs, 'lr_decay_period')
+        self.maybe_set(kwargs, 'lr_decay_gamma')
+        self.maybe_set(kwargs, 'max_epochs')
+        self.maybe_set(kwargs, 'class_weighted_loss')
         self.model = self.initialize_model(model_name, **kwargs)
-        kwargs['label_counts_mapping'] = str(kwargs['label_counts_mapping'])
-        kwargs['label_weight_mapping'] = str(kwargs['label_weight_mapping'])
-        self.sampling_rate = kwargs['sampling_rate']
-        self.profile = kwargs['profiler']
-        self.heatmap_layers = kwargs['heatmap_layers']
-        if 'model_checkpoint' in kwargs:
-            self.model_checkpoint = kwargs['model_checkpoint']
-        kwargs['model_name'] = model_name
+        self.maybe_set(kwargs, 'label_counts_mapping', mod=str)
+        self.maybe_set(kwargs, 'label_weight_mapping', mod=str)
+        self.maybe_set(kwargs, 'sampling_rate')
+        self.maybe_set(kwargs, 'profile')
+        self.maybe_set(kwargs, 'heatmap_layers')
+        self.maybe_set(kwargs, 'model_checkpoint')
+        self.maybe_set(kwargs, 'model_name')
         self.save_hyperparameters(*kwargs.keys())
 
         self.train_step, self.val_step = 0, 0
         self.best_metrics = None
+
+    def maybe_set(self, kwargs, attr, mod=lambda attr: attr):
+        if attr in kwargs:
+            setattr(self, attr, mod(kwargs[attr]))
 
     def initialize_model(self, model_name, **kwargs):
         model = getattr(ptbxl_models, model_name)(
@@ -130,15 +134,22 @@ class PTBXLClassificationModel(LightningModule):
         self.logger.log_metrics(tensorboard_logs, self.train_step)
         self.train_step += 1
 
-        output_metrics['progress_bar'] = tensorboard_logs
+        self.log_dict(
+            tensorboard_logs,
+            prog_bar=True,
+            logger=False,
+            on_step=True,
+            on_epoch=False,
+            sync_dist=True
+        )
         return output_metrics
 
     def all_gather_outputs(self, outputs):
         losses = torch.stack([x['loss'] for x in outputs])
         accs = torch.stack([x['acc'] for x in outputs])
         aucs = torch.stack([x['auc'] for x in outputs])
-        probs = torch.cat([x['probs'] for x in outputs])
-        targets = torch.cat([x['targets'] for x in outputs])
+        probs = torch.cat([x['probs'] for x in outputs]).detach()
+        targets = torch.cat([x['targets'] for x in outputs]).detach()
 
         if 'CPU' in self.trainer.accelerator_backend.__class__.__name__:
             return (
@@ -216,12 +227,6 @@ class PTBXLClassificationModel(LightningModule):
             hook_reports = pd.DataFrame(hook_reports).set_index('Callback Name')
             print(hook_reports)
             self.model.timings = {}
-        return {
-            'train_epoch_loss': loss_mean,
-            'train_epoch_acc': acc_mean,
-            'train_epoch_auc': auc_mean,
-            'train_f_max': f_max,
-        }
 
     def validation_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
@@ -231,8 +236,6 @@ class PTBXLClassificationModel(LightningModule):
         }
         self.logger.log_metrics(tensorboard_logs, self.val_step)
         self.val_step += 1
-
-        output_metrics['progress_bar'] = tensorboard_logs
         return output_metrics
 
     def validation_epoch_end(self, outputs):
@@ -301,12 +304,6 @@ class PTBXLClassificationModel(LightningModule):
             hook_reports = pd.DataFrame(hook_reports).set_index('Callback Name')
             print(hook_reports)
             self.model.timings = {}
-        return {
-            'val_epoch_loss': val_loss_mean,
-            'val_epoch_acc': val_acc_mean,
-            'val_epoch_auc': val_auc_mean,
-            'val_epoch_f_max': torch.tensor(f_max)
-        }
 
     def test_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
@@ -314,7 +311,14 @@ class PTBXLClassificationModel(LightningModule):
             f'Test/test_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        output_metrics['progress_bar'] = tensorboard_logs
+        self.log_dict(
+            tensorboard_logs,
+            prog_bar=True,
+            logger=False,
+            on_step=True,
+            on_epoch=False,
+            sync_dist=True
+        )
         return output_metrics
 
     def test_epoch_end(self, outputs):
@@ -348,19 +352,24 @@ class PTBXLClassificationModel(LightningModule):
                 symlinked_model_path.unlink()
                 os.remove(self.model_checkpoint)
                 print(
-                    f'...done. Removed link at {symlinked_model_path}, deleted {self.model_checkpoint}.'
+                    f'...done. Removed link at {symlinked_model_path}, '
+                    f'deleted {self.model_checkpoint}.'
                 )
         f_max = metric_summary(targets.cpu().numpy(), probs.cpu().numpy())[0]
-        self.logger.plot_confusion_matrix(targets.cpu().numpy(), (probs > 0.5).cpu().numpy(), self.labels)
+        self.logger.plot_confusion_matrix(
+            targets.cpu().numpy(), (probs > 0.5).cpu().numpy(), self.labels
+        )
         self.logger.plot_roc(targets.long().cpu().numpy(), probs.cpu().numpy(), self.labels)
-        return {
-            'log': {
+        self.log_dict(
+            {
                 'test_epoch_loss': test_loss_mean,
                 'test_epoch_acc': test_acc_mean,
                 'test_epoch_auc': test_auc_mean,
                 'test_epoch_f_max': f_max
-            }
-        }
+            },
+            on_step=False,
+            on_epoch=True
+        )
 
     @property
     def version_directory(self):

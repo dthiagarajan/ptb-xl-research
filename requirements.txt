@@ -1,5 +1,5 @@
 opencv-python
-pytorch-lightning==0.9.1rc1
+pytorch-lightning==1.0.4
 torch
 torchvision
 tqdm

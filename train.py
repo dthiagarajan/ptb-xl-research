@@ -108,8 +108,8 @@ if __name__ == '__main__':
 
     # Resetting trainer due to some issue with threading otherwise
     trainer = Trainer.from_argparse_args(
-        args, checkpoint_callback=checkpoint_callback, early_stop_callback=early_stopping_callback,
-        deterministic=True, logger=logger
+        args, checkpoint_callback=checkpoint_callback, deterministic=True, logger=logger,
+        callbacks=[early_stopping_callback] if early_stopping_callback else None
     )
     trainer.fit(model, data_module)
 
