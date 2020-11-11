@@ -1,6 +1,6 @@
 opencv-python
 pytorch-lightning==1.0.4
-torch
+torch>=1.6
 torchvision
 tqdm
 wandb

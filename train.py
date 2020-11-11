@@ -18,7 +18,7 @@ from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.utilities.distributed import find_free_network_port
 import torch.distributed as dist
 
-from core.callbacks import MultiMetricModelCheckpoint
+from core.callbacks import MultiMetricModelCheckpoint, ProgressBar
 from core.data import PTBXLDataModule
 from core.loggers import TensorBoardLogger, WandbLogger
 from core.models import PTBXLClassificationModel
@@ -50,6 +50,10 @@ if __name__ == '__main__':
         args.data_dir, args.sampling_rate, args.task_name,
         batch_size=args.batch_size, num_workers=args.num_workers
     )
+
+    # Reset SWA to not affect original part of training
+    use_swa = args.swa
+    args.swa = False
 
     args.label_counts_mapping = data_module.label_counts_mapping
     args.label_weight_mapping = data_module.label_weight_mapping
@@ -109,9 +113,29 @@ if __name__ == '__main__':
     # Resetting trainer due to some issue with threading otherwise
     trainer = Trainer.from_argparse_args(
         args, checkpoint_callback=checkpoint_callback, deterministic=True, logger=logger,
-        callbacks=[early_stopping_callback] if early_stopping_callback else None
+        callbacks=[early_stopping_callback, ProgressBar()] if early_stopping_callback else None
     )
     trainer.fit(model, data_module)
 
     if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0:
         print(f'Best model path: {checkpoint_callback.best_model_path}.')
+
+    if use_swa:
+        model.swa = use_swa
+        args.max_epochs = model.swa_epochs
+        checkpoint_callback = MultiMetricModelCheckpoint(
+            filepath=f'./lightning_logs/version_{logger.version}/swa_checkpoints/''{epoch}',
+            verbose=True,
+            monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
+            modes=['min', 'max', 'max']
+        ) if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0 else None
+        trainer = Trainer.from_argparse_args(
+            args, checkpoint_callback=checkpoint_callback, deterministic=True, logger=logger,
+            callbacks=[ProgressBar()]
+        )
+        trainer.fit(model, data_module)
+        print('Finalizing SWA model...')
+        model.finalize_swa_model()
+        print(f'...done.')
+        if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0:
+            print(f'Best model path: {checkpoint_callback.best_model_path}.')

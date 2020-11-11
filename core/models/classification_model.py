@@ -7,6 +7,7 @@ import pickle
 from pytorch_lightning.core.lightning import LightningModule
 import torch
 import torch.distributed as dist  # noqa: F401
+from torch.optim.swa_utils import AveragedModel, SWALR
 from tqdm import tqdm
 
 from core.analysis.visualization import compute_and_show_heatmap
@@ -58,9 +59,13 @@ class PTBXLClassificationModel(LightningModule):
         self.maybe_set(kwargs, 'heatmap_layers')
         self.maybe_set(kwargs, 'model_checkpoint')
         self.maybe_set(kwargs, 'model_name')
+        self.maybe_set(kwargs, 'swa')
+        self.maybe_set(kwargs, 'swa_epochs')
+        self.maybe_set(kwargs, 'swa_lr')
         self.save_hyperparameters(*[k for k in kwargs.keys() if 'mapping' not in k])
 
-        self.train_step, self.val_step = 0, 0
+        self.training_log_step, self.validation_log_step, self.testing_log_step = 0, 0, 0
+        self.training_log_epoch, self.validation_log_epoch, self.testing_log_epoch = 0, 0, 0
         self.best_metrics = None
 
     def maybe_set(self, kwargs, attr, mod=lambda attr: attr):
@@ -107,7 +112,7 @@ class PTBXLClassificationModel(LightningModule):
                         break
             if flag is True:
                 self.best_metrics = {f'best_{k}': v for (k, v) in metrics.items()}
-                self.best_metrics['best_epoch'] = self.current_epoch
+                self.best_metrics['best_epoch'] = self.validation_log_epoch
         self.log_hyperparams()
 
     def setup(self, stage):
@@ -131,8 +136,8 @@ class PTBXLClassificationModel(LightningModule):
             f'Train/train_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        self.logger.log_metrics(tensorboard_logs, self.train_step)
-        self.train_step += 1
+        self.logger.log_metrics(tensorboard_logs, self.training_log_step)
+        self.training_log_step += 1
 
         self.log_dict(
             tensorboard_logs,
@@ -185,20 +190,20 @@ class PTBXLClassificationModel(LightningModule):
                 "Train/train_acc": acc_mean,
                 "Train/train_auc": auc_mean
             },
-            self.current_epoch + 1
+            self.training_log_epoch + 1
         )
         try:
             self.logger.add_scalars(
-                "Losses", {"train_loss": loss_mean}, self.current_epoch + 1
+                "Losses", {"train_loss": loss_mean}, self.training_log_epoch + 1
             )
             self.logger.add_scalars(
-                "Accuracies", {"train_acc": acc_mean}, self.current_epoch + 1
+                "Accuracies", {"train_acc": acc_mean}, self.training_log_epoch + 1
             )
             self.logger.add_scalars(
-                "AUCs", {"train_auc": auc_mean}, self.current_epoch + 1
+                "AUCs", {"train_auc": auc_mean}, self.training_log_epoch + 1
             )
             self.logger.add_scalars(
-                "F1 Max Scores", {"train_f1-max": f_max}, self.current_epoch + 1
+                "F1 Max Scores", {"train_f1-max": f_max}, self.training_log_epoch + 1
             )
         except AttributeError as e:
             print(f'In (train) LR find, error ignored: {str(e)}')
@@ -211,7 +216,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'Train Metric Appendix/Average Precision ({threshold:0.1f})': average_precision,
                 f'Train Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
             })
-        self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
+        self.logger.log_metrics(metric_appendix, self.training_log_epoch + 1)
         if self.profiler and len(self.model.timings) > 0:
             hook_reports = []
             for hook_name in self.model.timings:
@@ -228,14 +233,27 @@ class PTBXLClassificationModel(LightningModule):
             print(hook_reports)
             self.model.timings = {}
 
+        if self.swa:
+            if not hasattr(self, 'swa_model'):
+                print(f'Initializing SWA model...')
+                self.swa_model = AveragedModel(self.model.model)
+                print(f'...done.')
+            self.swa_model.update_parameters(self.model.model)
+            torch.optim.swa_utils.update_bn(
+                self.trainer.datamodule.train_dataloader(), self.swa_model
+            )
+        self.training_log_epoch += 1
+
+    def finalize_swa_model(self):
+        assert self.swa, 'Model must have been trained with SWA.'
+        self.model.model = self.swa_model
+
     def validation_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
         tensorboard_logs = {
             f'Validation/val_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        self.logger.log_metrics(tensorboard_logs, self.val_step)
-        self.val_step += 1
         return output_metrics
 
     def validation_epoch_end(self, outputs):
@@ -255,20 +273,20 @@ class PTBXLClassificationModel(LightningModule):
                 "Validation/val_acc": val_acc_mean,
                 "Validation/val_auc": val_auc_mean,
             },
-            self.current_epoch + 1
+            self.validation_log_epoch + 1
         )
         try:
             self.logger.add_scalars(
-                "Losses", {"val_loss": val_loss_mean}, self.current_epoch + 1
+                "Losses", {"val_loss": val_loss_mean}, self.validation_log_epoch + 1
             )
             self.logger.add_scalars(
-                "Accuracies", {"val_acc": val_acc_mean}, self.current_epoch + 1
+                "Accuracies", {"val_acc": val_acc_mean}, self.validation_log_epoch + 1
             )
             self.logger.add_scalars(
-                "AUCs", {"val_auc": val_auc_mean}, self.current_epoch + 1
+                "AUCs", {"val_auc": val_auc_mean}, self.validation_log_epoch + 1
             )
             self.logger.add_scalars(
-                "F1 Max Scores", {"val_f1-max": f_max}, self.current_epoch + 1
+                "F1 Max Scores", {"val_f1-max": f_max}, self.validation_log_epoch + 1
             )
         except AttributeError as e:
             print(f'In (validation) LR find, error ignored: {str(e)}')
@@ -281,7 +299,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'Validation Metric Appendix/Average Precision ({threshold:0.1f})': average_precision,
                 f'Validation Metric Appendix/Average Recall ({threshold:0.1f})': average_recall,
             })
-        self.logger.log_metrics(metric_appendix, self.current_epoch + 1)
+        self.logger.log_metrics(metric_appendix, self.validation_log_epoch + 1)
         self.update_hyperparams_and_metrics(
             {
                 'val_epoch_loss': val_loss_mean,
@@ -304,6 +322,12 @@ class PTBXLClassificationModel(LightningModule):
             hook_reports = pd.DataFrame(hook_reports).set_index('Callback Name')
             print(hook_reports)
             self.model.timings = {}
+        self.validation_log_epoch += 1
+        return {
+            'val_epoch_loss': val_loss_mean,
+            'val_epoch_auc': val_auc_mean,
+            'val_epoch_f_max': torch.tensor(f_max)
+        }
 
     def test_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
@@ -581,6 +605,13 @@ class PTBXLClassificationModel(LightningModule):
                     )
                 ]
             )
+        elif self.swa:
+            if type(self.lr) is float:
+                optimizer = torch.optim.SGD([{'params': self.model.parameters(), 'lr': self.lr}])
+            else:
+                param_lr_mappings, self.lr = self.get_param_lr_maps(self.lr)
+                optimizer = torch.optim.SGD(param_lr_mappings)
+            return [optimizer], [SWALR(optimizer, swa_lr=self.swa_lr)]
         else:
             return optimizer
 
@@ -605,6 +636,9 @@ class PTBXLClassificationModel(LightningModule):
         parser.add_argument('--mixup', type=bool, default=False)
         parser.add_argument('--mixup_layer', type=int, default=0)
         parser.add_argument('--mixup_alpha', type=float, default=0.4)
+        parser.add_argument('--swa', type=bool, default=False)
+        parser.add_argument('--swa_lr', type=float, default=5e-2)
+        parser.add_argument('--swa_epochs', type=int, default=10)
         parser.add_argument('--heatmap_layers', nargs='+', type=str, default=['pool3'])
         parser.add_argument('--show_heatmaps', type=bool, default=False)
         return parser
