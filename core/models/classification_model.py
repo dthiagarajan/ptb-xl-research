@@ -62,6 +62,7 @@ class PTBXLClassificationModel(LightningModule):
         self.maybe_set(kwargs, 'swa')
         self.maybe_set(kwargs, 'swa_epochs')
         self.maybe_set(kwargs, 'swa_lr')
+        kwargs['model_name'] = model_name
         self.save_hyperparameters(*[k for k in kwargs.keys() if 'mapping' not in k])
 
         self.training_log_step, self.validation_log_step, self.testing_log_step = 0, 0, 0
@@ -132,6 +133,12 @@ class PTBXLClassificationModel(LightningModule):
 
     def training_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
+        return output_metrics
+    
+    def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
+        output_metrics = outputs[0][0]['extra']
+        output_metrics['loss'] = outputs[0][0]['minimize']
+        output_metrics = self.all_gather_outputs([output_metrics])
         tensorboard_logs = {
             f'Train/train_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
@@ -139,42 +146,34 @@ class PTBXLClassificationModel(LightningModule):
         self.logger.log_metrics(tensorboard_logs, self.training_log_step)
         self.training_log_step += 1
 
-        self.log_dict(
-            tensorboard_logs,
-            prog_bar=True,
-            logger=False,
-            on_step=True,
-            on_epoch=False,
-            sync_dist=True
-        )
-        return output_metrics
-
-    def all_gather_outputs(self, outputs):
+    def all_gather_outputs(self, outputs, detach=False):
         losses = torch.stack([x['loss'] for x in outputs])
         accs = torch.stack([x['acc'] for x in outputs])
         aucs = torch.stack([x['auc'] for x in outputs])
-        probs = torch.cat([x['probs'] for x in outputs]).detach()
-        targets = torch.cat([x['targets'] for x in outputs]).detach()
+        probs = torch.cat([x['probs'] for x in outputs])
+        targets = torch.cat([x['targets'] for x in outputs])
+        if detach:
+            probs, targets = probs.detach(), targets.detach()
 
         if 'CPU' in self.trainer.accelerator_backend.__class__.__name__:
-            return (
-                losses.mean(),
-                accs.mean(),
-                aucs.mean(),
-                probs,
-                targets
-            )
+            return {
+                'loss': losses.mean(),
+                'acc': accs.mean(),
+                'auc': aucs.mean(),
+                'probs': probs,
+                'targets': targets
+            }
 
-        return (
-            all_gather_op(losses).mean(),
-            all_gather_op(accs).mean(),
-            all_gather_op(aucs).mean(),
-            all_gather_op(probs),
-            all_gather_op(targets)
-        )
+        return {
+            'loss': all_gather_op(losses).mean(),
+            'acc': all_gather_op(accs).mean(),
+            'auc': all_gather_op(aucs).mean(),
+            'probs': all_gather_op(probs),
+            'targets': all_gather_op(targets)
+        }
 
     def training_epoch_end(self, outputs):
-        loss_mean, acc_mean, auc_mean, probs, targets = self.all_gather_outputs(outputs)
+        loss_mean, acc_mean, auc_mean, probs, targets = self.all_gather_outputs(outputs, detach=True).values()
         (
             f_max,
             _,
@@ -240,7 +239,7 @@ class PTBXLClassificationModel(LightningModule):
                 print(f'...done.')
             self.swa_model.update_parameters(self.model.model)
             torch.optim.swa_utils.update_bn(
-                self.trainer.datamodule.train_dataloader(), self.swa_model
+                self.trainer.datamodule.train_dataloader(), self.swa_model, device=self.device
             )
         self.training_log_epoch += 1
 
@@ -250,14 +249,21 @@ class PTBXLClassificationModel(LightningModule):
 
     def validation_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
+        return output_metrics
+
+    def on_validation_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
+        output_metrics = outputs
+        output_metrics = self.all_gather_outputs([output_metrics])
         tensorboard_logs = {
             f'Validation/val_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        return output_metrics
+        self.logger.log_metrics(tensorboard_logs, self.validation_log_step)
+        self.validation_log_step += 1
+
 
     def validation_epoch_end(self, outputs):
-        val_loss_mean, val_acc_mean, val_auc_mean, probs, targets = self.all_gather_outputs(outputs)
+        val_loss_mean, val_acc_mean, val_auc_mean, probs, targets = self.all_gather_outputs(outputs, detach=True).values()
         (
             f_max,
             _,
@@ -331,19 +337,18 @@ class PTBXLClassificationModel(LightningModule):
 
     def test_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
+        return output_metrics
+
+    def on_test_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
+        output_metrics = outputs
+        output_metrics = self.all_gather_outputs([output_metrics])
         tensorboard_logs = {
             f'Test/test_step_{metric_name}': output_metrics[metric_name]
             for metric_name in output_metrics if metric_name not in ['probs', 'targets']
         }
-        self.log_dict(
-            tensorboard_logs,
-            prog_bar=True,
-            logger=False,
-            on_step=True,
-            on_epoch=False,
-            sync_dist=True
-        )
-        return output_metrics
+        self.logger.log_metrics(tensorboard_logs, self.testing_log_step)
+        self.testing_log_step += 1
+
 
     def test_epoch_end(self, outputs):
         if hasattr(self, 'model_checkpoint') and int(os.environ.get('LOCAL_RANK', 0)) == 0:
@@ -358,7 +363,7 @@ class PTBXLClassificationModel(LightningModule):
                 f'...done. Symlinked to {self.model_checkpoint} to {symlinked_model_path} and '
                 f'{hparams_path} to {symlinked_hparams_path}.'
             )
-        test_loss_mean, test_acc_mean, test_auc_mean, probs, targets = self.all_gather_outputs(outputs)
+        test_loss_mean, test_acc_mean, test_auc_mean, probs, targets = self.all_gather_outputs(outputs, detach=True).values()
         self.test_outputs = {
             'loss': test_loss_mean,
             'acc': test_acc_mean,

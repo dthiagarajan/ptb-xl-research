@@ -10,6 +10,7 @@ ensemble_logs/*
 heatmap_logs/*
 heatmap_logs.zip
 lightning_logs/*
+swa_lightning_logs/*
 testing_logs/*
 wandb/*
 NOTES.txt

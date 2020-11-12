@@ -16,6 +16,7 @@ import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.utilities.distributed import find_free_network_port
+import torch
 import torch.distributed as dist
 
 from core.callbacks import MultiMetricModelCheckpoint, ProgressBar
@@ -33,6 +34,7 @@ def get_args():
     parser = argparse.ArgumentParser(
         'Train a classification model on PTB-XL diagnostic superclass'
     )
+    parser.add_argument('--log_dir', type=str, default='./lightning_logs')
     parser.add_argument('--checkpoint_models', type=bool, default=False)
     parser.add_argument('--early_stopping', type=bool, default=False)
     parser.add_argument('--find_lr', type=bool, default=False)
@@ -94,8 +96,8 @@ if __name__ == '__main__':
     if args.logger_platform == 'wandb':
         logger = WandbLogger(project="ptb-xl")
     elif args.logger_platform == 'tensorboard':
-        logger = TensorBoardLogger('./lightning_logs', name='')
-        model.log_dir = './lightning_logs'
+        logger = TensorBoardLogger(args.log_dir, name='')
+        model.log_dir = args.log_dir
 
     early_stopping_callback = EarlyStopping(
         verbose=True,
@@ -104,7 +106,7 @@ if __name__ == '__main__':
         patience=5
     ) if args.early_stopping else None
     checkpoint_callback = MultiMetricModelCheckpoint(
-        filepath=f'./lightning_logs/version_{logger.version}/checkpoints/''{epoch}',
+        filepath=f'{args.log_dir}/version_{logger.version}/checkpoints/''{epoch}',
         verbose=True,
         monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
         modes=['min', 'max', 'max']
@@ -121,10 +123,15 @@ if __name__ == '__main__':
         print(f'Best model path: {checkpoint_callback.best_model_path}.')
 
     if use_swa:
+        if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0:
+            print(f'Loading best model from initial training...')
+            state_dict = torch.load(checkpoint_callback.best_model_path)['state_dict']
+            model.load_state_dict(state_dict)
+            print(f'...done.')
         model.swa = use_swa
         args.max_epochs = model.swa_epochs
         checkpoint_callback = MultiMetricModelCheckpoint(
-            filepath=f'./lightning_logs/version_{logger.version}/swa_checkpoints/''{epoch}',
+            filepath=f'{args.log_dir}/version_{logger.version}/swa_checkpoints/''{epoch}',
             verbose=True,
             monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
             modes=['min', 'max', 'max']
