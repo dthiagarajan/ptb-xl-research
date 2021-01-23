@@ -30,6 +30,9 @@ class WandbLogger(WandbLogger):
         wandb.log({k: wandb.Image(v) for k, v in figure_dict.items()})
         plt.close('all')
 
+    def add_histogram(self, tag, values, global_step):
+        self.experiment.log(data={tag: wandb.Histogram(values)}, commit=False)
+
 
 def confusion_matrix(y_true: np.ndarray, y_pred: np.ndarray, labels: np.ndarray):
     """Computes the multilabel confusion matrix to evaluate the accuracy of a classification.

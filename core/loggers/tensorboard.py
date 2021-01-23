@@ -32,6 +32,9 @@ class TensorBoardLogger(TensorBoardLogger):
             self.experiment.add_figure(k, v)
         plt.close('all')
 
+    def add_histogram(self, tag, values, global_step):
+        self.experiment.add_histogram(tag=tag, values=values, global_step=global_step)
+
 
 def confusion_matrix(y_true, y_pred, classes, title='Confusion matrix', cmap=plt.cm.Blues):
     y_true = np.asarray(y_true, dtype=int)

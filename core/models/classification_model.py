@@ -134,7 +134,7 @@ class PTBXLClassificationModel(LightningModule):
     def training_step(self, batch, batch_idx):
         output_metrics = self(batch, batch_idx)
         return output_metrics
-    
+
     def on_train_batch_end(self, outputs, batch, batch_idx, dataloader_idx):
         output_metrics = outputs[0][0]['extra']
         output_metrics['loss'] = outputs[0][0]['minimize']
@@ -260,7 +260,6 @@ class PTBXLClassificationModel(LightningModule):
         }
         self.logger.log_metrics(tensorboard_logs, self.validation_log_step)
         self.validation_log_step += 1
-
 
     def validation_epoch_end(self, outputs):
         val_loss_mean, val_acc_mean, val_auc_mean, probs, targets = self.all_gather_outputs(outputs, detach=True).values()

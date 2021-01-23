@@ -1,5 +1,6 @@
 opencv-python
 pytorch-lightning==1.0.5
+pytorch-lightning-bolts
 torch>=1.6
 torchvision
 tqdm

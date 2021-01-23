@@ -15,11 +15,16 @@ import os
 import pandas as pd
 from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import EarlyStopping
-from pytorch_lightning.utilities.distributed import find_free_network_port
 import torch
 import torch.distributed as dist
 
-from core.callbacks import MultiMetricModelCheckpoint, ProgressBar
+from core.callbacks import (
+    BatchGradientVerificationCallback,
+    BatchNormVerificationCallback,
+    ModuleDataMonitor,
+    MultiMetricModelCheckpoint,
+    ProgressBar
+)
 from core.data import PTBXLDataModule
 from core.loggers import TensorBoardLogger, WandbLogger
 from core.models import PTBXLClassificationModel
@@ -111,11 +116,26 @@ if __name__ == '__main__':
         monitors=['val_epoch_loss', 'val_epoch_auc', 'val_epoch_f_max'],
         modes=['min', 'max', 'max']
     ) if args.checkpoint_models and int(os.environ.get('LOCAL_RANK', 0)) == 0 else None
+    progress_bar_callback = ProgressBar()
+    batch_gradient_verification_callback = BatchGradientVerificationCallback(
+        output_mapping=lambda output: output['loss']
+    )
+    batch_norm_verification_callback = BatchNormVerificationCallback()
+    module_monitor_callback = ModuleDataMonitor(submodules=True)
 
     # Resetting trainer due to some issue with threading otherwise
     trainer = Trainer.from_argparse_args(
         args, checkpoint_callback=checkpoint_callback, deterministic=True, logger=logger,
-        callbacks=[early_stopping_callback, ProgressBar()] if early_stopping_callback else None
+        callbacks=list(filter(
+            lambda callback: callback is not None,
+            [
+                early_stopping_callback,
+                progress_bar_callback,
+                module_monitor_callback,
+                batch_gradient_verification_callback,
+                batch_norm_verification_callback
+            ]
+        ))
     )
     trainer.fit(model, data_module)
 
