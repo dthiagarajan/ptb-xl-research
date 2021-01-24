@@ -4,12 +4,13 @@ from typing import Callable, List
 
 
 class CallbackModel(nn.Module):
-    def __init__(self, model: nn.Module, callbacks: List[Callable], profile=False):
+    def __init__(self, model: nn.Module, callbacks: List[Callable], profile=False, unsupervised=False):
         super(CallbackModel, self).__init__()
         self.model = model
         self._callbacks = callbacks
         self.profile = profile
         self.timings = {}
+        self.unsupervised = unsupervised
 
     def callback(self, hook_name, batch, batch_idx, model_output=None):
         if hook_name not in self.timings:
@@ -30,7 +31,11 @@ class CallbackModel(nn.Module):
         self.next_batch = batch
         # These callbacks might modify self.next_batch
         self.callback('on_forward_start', batch, batch_idx)
-        x, _ = self.next_batch
+        try:
+            x, _ = self.next_batch
+        except ValueError:
+            assert self.unsupervised, 'Model is assumed to get batches with no labels.'
+            x = self.next_batch
         model_output = self.model(x)
         modified_model_output = self.callback(
             'on_forward_end', batch, batch_idx, model_output=model_output

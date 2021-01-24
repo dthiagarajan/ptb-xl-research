@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from typing import Optional
+from typing import Callable, Optional
 
 
 class ECGDataset(torch.utils.data.Dataset):
@@ -28,3 +28,10 @@ class ECGDataset(torch.utils.data.Dataset):
 
     def __len__(self):
         return len(self.signals)
+
+
+class ECGSimCLRDataset(ECGDataset):
+    def __getitem__(self, index):
+        assert hasattr(self, 'transform'), 'SimCLR dataset must have a transform step.'
+        signal = self.signals[index]
+        return self.transform(signal).float(), self.transform(signal).float(), torch.tensor(0), torch.tensor(0)

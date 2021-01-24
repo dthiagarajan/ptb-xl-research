@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader
 import torchvision.transforms as transforms
 from typing import Optional
 
-from core.data.dataset import ECGDataset
+from core.data.dataset import ECGDataset, ECGSimCLRDataset
 from core.data.transforms import (
     binarize_labels,
     window_sampling_transform,
@@ -19,11 +19,20 @@ from core.data.utils import load_all_data, split_all_data
 
 
 class PTBXLDataModule(pl.LightningDataModule):
-    def __init__(self, data_dir, sampling_rate, task_name, batch_size=128, num_workers=0):
+    def __init__(
+        self,
+        data_dir,
+        sampling_rate,
+        task_name,
+        unsupervised=False,
+        batch_size=128,
+        num_workers=0
+    ):
         super(PTBXLDataModule, self).__init__()
         self.data_dir = data_dir
         self.sampling_rate = sampling_rate
         self.task_name = task_name
+        self.unsupervised = unsupervised
         self.batch_size = batch_size
         self.num_workers = num_workers
 
@@ -84,13 +93,14 @@ class PTBXLDataModule(pl.LightningDataModule):
             np.transpose,  # Setting signal length as the last dimension
             torch.from_numpy
         ])
-        test_transform = transforms.Compose([
+        test_transform = train_transform if self.unsupervised else transforms.Compose([
             window_segmenting_test_transform(self.sampling_rate * 10, int(self.sampling_rate * 2.5)),
             partial(np.transpose, axes=(0, 2, 1)),  # Setting signal length as the last dimension
             torch.from_numpy
         ])
-        self.train_dataset = ECGDataset(valid_x_train, valid_y_train, transform=train_transform)
-        self.val_dataset = ECGDataset(valid_x_test, valid_y_test, transform=test_transform)
+        ecg_dataset_class = ECGSimCLRDataset if self.unsupervised else ECGDataset
+        self.train_dataset = ecg_dataset_class(valid_x_train, valid_y_train, transform=train_transform)
+        self.val_dataset = ecg_dataset_class(valid_x_test, valid_y_test, transform=test_transform)
 
         self.get_label_weight_mapping()
 
@@ -125,23 +135,47 @@ class PTBXLDataModule(pl.LightningDataModule):
             with open(class_weights_fp, 'wb') as f:
                 pickle.dump(self.label_weight_mapping, f)
 
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=True,
+    def unsupervised_collate_fn(self, batch):
+        return (
+            torch.cat([torch.stack([b[0] for b in batch]), torch.stack([b[1] for b in batch])]),
+            torch.cat([torch.stack([b[2] for b in batch]), torch.stack([b[3] for b in batch])])
         )
+
+    def train_dataloader(self):
+        if self.unsupervised:
+            return DataLoader(
+                self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=True, collate_fn=self.unsupervised_collate_fn
+            )
+        else:
+            return DataLoader(
+                self.train_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=True,
+            )
 
     def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=False,
-        )
+        if self.unsupervised:
+            return DataLoader(
+                self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=False, collate_fn=self.unsupervised_collate_fn
+            )
+        else:
+            return DataLoader(
+                self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=False,
+            )
 
     def test_dataloader(self):
-        return DataLoader(
-            self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
-            shuffle=False,
-        )
+        if self.unsupervised:
+            return DataLoader(
+                self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=False, collate_fn=self.unsupervised_collate_fn
+            )
+        else:
+            return DataLoader(
+                self.val_dataset, batch_size=self.batch_size, num_workers=self.num_workers,
+                shuffle=False,
+            )
 
     @staticmethod
     def add_data_specific_args(parent_parser):

@@ -97,6 +97,14 @@ def targets_identity(y_pred, y_true):
     return y_true
 
 
+def similarities(y_pred, y_true):
+    return y_pred[:, 0]
+
+
+def correct_similarity_prob(y_pred, y_true):
+    return torch.softmax(y_pred, dim=-1)[:, 0].mean()
+
+
 class MetricOutputCallback(BaseModelCallback):
     """Wraps a model to return a dictionary of metrics / diagnostic variables for a given batch."""
     def __init__(self, metric_functions: Dict[str, Callable]):
@@ -226,16 +234,24 @@ class MixupCallback(MetricOutputCallback):
         return model_output
 
 
-def callback_factory(**kwargs):
-    return [
-        TTACallback(),
-        LossCallback(LossCallback.initialize_loss_function(**kwargs)),
-        (
-            MixupCallback(
-                MixupCallback.initialize_metric_functions(),
-                kwargs['mixup_alpha'],
-                kwargs['mixup_layer']
-            ) if kwargs['mixup'] else
-            MetricOutputCallback(MetricOutputCallback.initialize_metric_functions())
-        ),
-    ]
+def callback_factory(unsupervised=False, **kwargs):
+    if unsupervised:
+        loss_function = loss_functions.NTXEntCriterion(temperature=kwargs['temperature'])
+        activation_function = loss_function.compute_activations
+        return [
+            LossCallback(loss_function, activation_function=activation_function),
+            MetricOutputCallback({'similarities': similarities, 'correct_similarity_prob': correct_similarity_prob})
+        ]
+    else:
+        return [
+            TTACallback(),
+            LossCallback(LossCallback.initialize_loss_function(**kwargs)),
+            (
+                MixupCallback(
+                    MixupCallback.initialize_metric_functions(),
+                    kwargs['mixup_alpha'],
+                    kwargs['mixup_layer']
+                ) if kwargs['mixup'] else
+                MetricOutputCallback(MetricOutputCallback.initialize_metric_functions())
+            ),
+        ]
